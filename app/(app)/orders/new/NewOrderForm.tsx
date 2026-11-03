@@ -156,20 +156,19 @@ export default function NewOrderForm({ customers, products: _products, paymentCh
 
       // Generate order number
       const ymKey = getYearMonthKey(orderDate);
-      const { data: seqRow, error: seqErr } = await supabase
+      const { data: existing } = await supabase
         .from("order_number_seq")
-        .upsert({ year_month: ymKey, last_seq: 1 }, { onConflict: "year_month", ignoreDuplicates: false })
         .select("last_seq")
+        .eq("year_month", ymKey)
         .single();
 
-      let seq = 1;
-      if (seqErr || !seqRow) {
-        // Row exists, increment
-        const { data: existing } = await supabase.from("order_number_seq").select("last_seq").eq("year_month", ymKey).single();
-        seq = (existing?.last_seq ?? 0) + 1;
-        await supabase.from("order_number_seq").update({ last_seq: seq }).eq("year_month", ymKey);
+      let seq: number;
+      if (!existing) {
+        await supabase.from("order_number_seq").insert({ year_month: ymKey, last_seq: 1 });
+        seq = 1;
       } else {
-        seq = seqRow.last_seq;
+        seq = existing.last_seq + 1;
+        await supabase.from("order_number_seq").update({ last_seq: seq }).eq("year_month", ymKey);
       }
       const orderNumber = makeOrderNumber(ymKey, seq);
 
