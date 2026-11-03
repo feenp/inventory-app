@@ -16,6 +16,7 @@ export default function StockClient({ products }: { products: Product[] }) {
 
   // Tab: 'summary' | 'lots' | 'receive' | 'adjust'
   const [tab, setTab] = useState<"summary" | "lots" | "receive" | "adjust">("summary");
+  const [hideEmptyLots, setHideEmptyLots] = useState(true);
 
   // Receive lot form
   const [rcvProduct, setRcvProduct] = useState("");
@@ -96,8 +97,21 @@ export default function StockClient({ products }: { products: Product[] }) {
     });
 
     setRcvLotNum(""); setRcvBoxes(""); setRcvSaving(false);
-    fetchData();
+    await fetchData();
     setTab("lots");
+  }
+
+  async function deleteLot(lot: LotRemaining) {
+    if (!confirm(`ซ่อนล็อต "${lot.lot_number}" ?\nประวัติการขายและการปรับสต็อคจะยังคงอยู่`)) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("lots").update({ deleted_at: new Date().toISOString() }).eq("id", lot.lot_id);
+    await supabase.from("change_history").insert({
+      user_id: user?.id, user_email: user?.email,
+      action: "delete", entity_type: "lot",
+      entity_id: lot.lot_id, entity_label: lot.lot_number,
+      before_data: { lot_number: lot.lot_number, remaining_boxes: lot.remaining_boxes },
+    });
+    fetchData();
   }
 
   async function lookupAdjustLot() {
@@ -212,6 +226,13 @@ export default function StockClient({ products }: { products: Product[] }) {
       {/* Lots */}
       {tab === "lots" && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <span className="text-sm text-gray-500">{lots.filter(l => !hideEmptyLots || l.remaining_boxes > 0).length} ล็อต</span>
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={hideEmptyLots} onChange={e => setHideEmptyLots(e.target.checked)} className="w-4 h-4" />
+              ซ่อนล็อตหมด
+            </label>
+          </div>
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
@@ -222,10 +243,11 @@ export default function StockClient({ products }: { products: Product[] }) {
                 <th className="text-right px-4 py-3 font-medium">ขายออก</th>
                 <th className="text-right px-4 py-3 font-medium">ปรับสต็อค</th>
                 <th className="text-right px-4 py-3 font-medium">คงเหลือ</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {lots.map(l => (
+              {lots.filter(l => !hideEmptyLots || l.remaining_boxes > 0).map(l => (
                 <tr key={l.lot_id} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5 font-mono text-gray-600">{l.lot_number}</td>
                   <td className="px-4 py-2.5">{(l as unknown as {product:{name:string}|null})?.product?.name}</td>
@@ -234,6 +256,9 @@ export default function StockClient({ products }: { products: Product[] }) {
                   <td className="px-4 py-2.5 text-right text-red-500">{l.boxes_sold > 0 ? `-${l.boxes_sold}` : "0"}</td>
                   <td className="px-4 py-2.5 text-right text-blue-500">{l.adjustment_total !== 0 ? (l.adjustment_total > 0 ? `+${l.adjustment_total}` : l.adjustment_total) : "0"}</td>
                   <td className="px-4 py-2.5 text-right font-semibold">{l.remaining_boxes.toLocaleString()}</td>
+                  <td className="px-4 py-2.5">
+                    <button onClick={() => deleteLot(l)} className="text-xs text-red-400 hover:text-red-600">ลบ</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

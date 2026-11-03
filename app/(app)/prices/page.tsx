@@ -65,6 +65,19 @@ export default function PricesPage() {
     setEditThreshold(p.low_stock_threshold != null ? String(p.low_stock_threshold) : "");
   }
 
+  async function deleteProduct(p: Product) {
+    if (!confirm(`ซ่อนสินค้า "${p.name}" ?\nข้อมูลล็อตและออเดอร์ที่เกี่ยวข้องจะยังคงอยู่`)) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("products").update({ deleted_at: new Date().toISOString() }).eq("id", p.id);
+    await supabase.from("change_history").insert({
+      user_id: user?.id, user_email: user?.email,
+      action: "delete", entity_type: "product",
+      entity_id: p.id, entity_label: p.name,
+      before_data: { name: p.name, standard_price: p.standard_price },
+    });
+    fetchData();
+  }
+
   async function saveProduct(p: Product) {
     setEditProductSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -163,8 +176,9 @@ export default function PricesPage() {
                   <>
                     <td className="px-4 py-3 text-right">{p.standard_price != null ? `฿${formatBaht(p.standard_price)}` : <span className="text-gray-400">-</span>}</td>
                     <td className="px-4 py-3 text-right">{p.low_stock_threshold ?? <span className="text-gray-400">-</span>}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 flex gap-3">
                       <button onClick={() => startEdit(p)} className="text-xs text-blue-500 hover:text-blue-700">แก้ไข</button>
+                      <button onClick={() => deleteProduct(p)} className="text-xs text-red-400 hover:text-red-600">ลบ</button>
                     </td>
                   </>
                 )}

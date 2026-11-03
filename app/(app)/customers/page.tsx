@@ -56,6 +56,20 @@ export default function CustomersPage() {
     setNewName(""); setAdding(false); fetchCustomers();
   }
 
+  async function deleteCustomer(c: Customer) {
+    if (!confirm(`ซ่อนลูกค้า "${c.name}" ?\nประวัติออเดอร์จะยังคงอยู่`)) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("customers").update({ deleted_at: new Date().toISOString() }).eq("id", c.id);
+    await supabase.from("change_history").insert({
+      user_id: user?.id, user_email: user?.email,
+      action: "delete", entity_type: "customer",
+      entity_id: c.id, entity_label: c.name,
+      before_data: { name: c.name },
+    });
+    if (selectedCustomer?.id === c.id) setSelectedCustomer(null);
+    fetchCustomers();
+  }
+
   async function viewCustomer(c: Customer) {
     setSelectedCustomer(c);
     setOrdersLoading(true);
@@ -120,7 +134,10 @@ export default function CustomersPage() {
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-blue-500 text-xs">ดูประวัติ →</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="text-blue-500 text-xs mr-3">ดูประวัติ →</span>
+                      <button onClick={e => { e.stopPropagation(); deleteCustomer(c); }} className="text-xs text-red-400 hover:text-red-600">ลบ</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
