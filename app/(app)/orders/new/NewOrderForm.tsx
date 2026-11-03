@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatBaht, getYearMonthKey, makeOrderNumber } from "@/lib/utils";
@@ -45,6 +45,19 @@ export default function NewOrderForm({ customers, products: _products, paymentCh
   const [lines, setLines] = useState<OrderLine[]>([newLine()]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [previewOrderNumber, setPreviewOrderNumber] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchPreview() {
+      const ymKey = getYearMonthKey(orderDate);
+      const { count } = await supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .like("order_number", `${ymKey}-%`);
+      setPreviewOrderNumber(makeOrderNumber(ymKey, (count ?? 0) + 1));
+    }
+    fetchPreview();
+  }, [orderDate, supabase]);
 
   // Lookup lot by lot_number
   const lookupLot = useCallback(async (lotNumber: string, lineId: string) => {
@@ -208,7 +221,14 @@ export default function NewOrderForm({ customers, products: _products, paymentCh
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">บันทึกออเดอร์ใหม่</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">บันทึกออเดอร์ใหม่</h1>
+        {previewOrderNumber && (
+          <div className="text-sm text-gray-500">
+            เลขออเดอร์: <span className="font-semibold text-blue-600">{previewOrderNumber}</span>
+          </div>
+        )}
+      </div>
 
       {/* Header info */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 mb-5">
