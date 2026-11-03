@@ -154,22 +154,13 @@ export default function NewOrderForm({ customers, products: _products, paymentCh
         });
       }
 
-      // Generate order number
+      // Generate order number by counting existing orders this month
       const ymKey = getYearMonthKey(orderDate);
-      const { data: existing } = await supabase
-        .from("order_number_seq")
-        .select("last_seq")
-        .eq("year_month", ymKey)
-        .single();
-
-      let seq: number;
-      if (!existing) {
-        await supabase.from("order_number_seq").insert({ year_month: ymKey, last_seq: 1 });
-        seq = 1;
-      } else {
-        seq = existing.last_seq + 1;
-        await supabase.from("order_number_seq").update({ last_seq: seq }).eq("year_month", ymKey);
-      }
+      const { count } = await supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .like("order_number", `${ymKey}-%`);
+      const seq = (count ?? 0) + 1;
       const orderNumber = makeOrderNumber(ymKey, seq);
 
       // Create order
