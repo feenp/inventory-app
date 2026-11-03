@@ -1,0 +1,329 @@
+"use client";
+import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { formatDateTH, validateLotNumber } from "@/lib/utils";
+import type { LotRemaining, ProductStock, StockAdjustment } from "@/lib/types";
+import { ADJUSTMENT_REASONS } from "@/lib/types";
+
+interface Product { id: string; name: string; standard_price: number | null }
+
+export default function StockClient({ products }: { products: Product[] }) {
+  const supabase = createClient();
+  const [productStock, setProductStock] = useState<ProductStock[]>([]);
+  const [lots, setLots] = useState<LotRemaining[]>([]);
+  const [recentAdjustments, setRecentAdjustments] = useState<StockAdjustment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Tab: 'summary' | 'lots' | 'receive' | 'adjust'
+  const [tab, setTab] = useState<"summary" | "lots" | "receive" | "adjust">("summary");
+
+  // Receive lot form
+  const [rcvProduct, setRcvProduct] = useState("");
+  const [rcvLotNum, setRcvLotNum] = useState("");
+  const [rcvDate, setRcvDate] = useState(new Date().toISOString().slice(0, 10));
+  const [rcvBoxes, setRcvBoxes] = useState("");
+  const [rcvError, setRcvError] = useState<string | null>(null);
+  const [rcvSaving, setRcvSaving] = useState(false);
+
+  // Adjust form
+  const [adjLotNum, setAdjLotNum] = useState("");
+  const [adjLotId, setAdjLotId] = useState("");
+  const [adjLotInfo, setAdjLotInfo] = useState<{ product_name: string; remaining: number } | null>(null);
+  const [adjLotError, setAdjLotError] = useState<string | null>(null);
+  const [adjQty, setAdjQty] = useState("");
+  const [adjReason, setAdjReason] = useState("correction");
+  const [adjNote, setAdjNote] = useState("");
+  const [adjSaving, setAdjSaving] = useState(false);
+  const [adjError, setAdjError] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const [{ data: ps }, { data: ls }, { data: adj }] = await Promise.all([
+      supabase.from("product_stock").select("*").order("name"),
+      supabase.from("lot_remaining").select("*, product:products(name, standard_price)").is("deleted_at", null).order("date_received", { ascending: false }),
+      supabase.from("stock_adjustments").select("*, lot:lots(lot_number, product:products(name))").order("created_at", { ascending: false }).limit(20),
+    ]);
+    setProductStock((ps as unknown as ProductStock[]) ?? []);
+    setLots((ls as unknown as LotRemaining[]) ?? []);
+    setRecentAdjustments((adj as unknown as StockAdjustment[]) ?? []);
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-suggest lot number when product and date change
+  useEffect(() => {
+    if (!rcvProduct || !rcvDate) return;
+    const beYear = new Date(rcvDate).getFullYear() + 543;
+    const mm = String(new Date(rcvDate).getMonth() + 1).padStart(2, "0");
+    const dd = String(new Date(rcvDate).getDate()).padStart(2, "0");
+    const prefix = `${beYear}${mm}${dd}`;
+    const dayLots = lots.filter(l => l.lot_number.startsWith(prefix));
+    const maxPallet = dayLots.reduce((m, l) => {
+      const pallet = parseInt(l.lot_number.slice(8));
+      return isNaN(pallet) ? m : Math.max(m, pallet);
+    }, 0);
+    setRcvLotNum(`${prefix}${maxPallet + 1}`);
+  }, [rcvProduct, rcvDate, lots]);
+
+  async function handleReceiveLot() {
+    setRcvError(null);
+    const validation = validateLotNumber(rcvLotNum);
+    if (!validation.valid) return setRcvError(validation.error!);
+    if (!rcvProduct) return setRcvError("กรุณาเลือกสินค้า");
+    if (!rcvBoxes || parseInt(rcvBoxes) < 1) return setRcvError("กรุณากรอกจำนวนกล่อง");
+
+    // Check uniqueness
+    const { data: existing } = await supabase.from("lots").select("id").eq("lot_number", rcvLotNum.trim()).single();
+    if (existing) return setRcvError("เลขล็อตนี้มีในระบบแล้ว");
+
+    setRcvSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: lot, error } = await supabase.from("lots").insert({
+      lot_number: rcvLotNum.trim(),
+      product_id: rcvProduct,
+      date_received: rcvDate,
+      boxes_received: parseInt(rcvBoxes),
+    }).select("id").single();
+
+    if (error) { setRcvError(error.message); setRcvSaving(false); return; }
+
+    await supabase.from("change_history").insert({
+      user_id: user?.id, user_email: user?.email,
+      action: "create", entity_type: "lot",
+      entity_id: lot.id, entity_label: rcvLotNum.trim(),
+      after_data: { lot_number: rcvLotNum.trim(), product_id: rcvProduct, date_received: rcvDate, boxes_received: parseInt(rcvBoxes) },
+    });
+
+    setRcvLotNum(""); setRcvBoxes(""); setRcvSaving(false);
+    fetchData();
+    setTab("lots");
+  }
+
+  async function lookupAdjustLot() {
+    if (!adjLotNum.trim()) return;
+    const { data } = await supabase.from("lot_remaining").select("lot_id, remaining_boxes, product_id").eq("lot_number", adjLotNum.trim()).single();
+    if (!data) { setAdjLotError("ไม่พบล็อตนี้"); setAdjLotId(""); setAdjLotInfo(null); return; }
+    const { data: prod } = await supabase.from("products").select("name").eq("id", data.product_id).single();
+    setAdjLotId(data.lot_id);
+    setAdjLotInfo({ product_name: prod?.name ?? "ไม่ระบุ", remaining: data.remaining_boxes });
+    setAdjLotError(null);
+  }
+
+  async function handleAdjust() {
+    setAdjError(null);
+    if (!adjLotId) return setAdjError("กรุณาค้นหาล็อตก่อน");
+    const qty = parseInt(adjQty);
+    if (!adjQty || isNaN(qty) || qty === 0) return setAdjError("กรุณากรอกจำนวน (บวก=เพิ่ม, ลบ=ลด)");
+    if (adjLotInfo && adjLotInfo.remaining + qty < 0) return setAdjError(`ไม่สามารถลดได้ เหลือเพียง ${adjLotInfo.remaining} กล่อง`);
+
+    setAdjSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("stock_adjustments").insert({
+      lot_id: adjLotId, quantity: qty, reason: adjReason,
+      note: adjNote.trim() || null, created_by: user?.id,
+    });
+    if (error) { setAdjError(error.message); setAdjSaving(false); return; }
+
+    await supabase.from("change_history").insert({
+      user_id: user?.id, user_email: user?.email,
+      action: "create", entity_type: "stock_adjustment",
+      entity_id: adjLotId, entity_label: adjLotNum,
+      after_data: { lot_number: adjLotNum, quantity: qty, reason: adjReason, note: adjNote },
+    });
+
+    setAdjQty(""); setAdjNote(""); setAdjLotNum(""); setAdjLotId(""); setAdjLotInfo(null);
+    setAdjSaving(false);
+    fetchData();
+    setTab("summary");
+  }
+
+  if (loading) return <div className="p-8 text-center text-gray-400">กำลังโหลด...</div>;
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <h1 className="text-2xl font-bold text-gray-800 mb-6">สต็อคและล็อต</h1>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 bg-gray-100 rounded-xl p-1 w-fit">
+        {(["summary", "lots", "receive", "adjust"] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors font-medium ${tab === t ? "bg-white shadow-sm text-blue-700" : "text-gray-500 hover:text-gray-700"}`}>
+            {{ summary: "ภาพรวมสต็อค", lots: "รายการล็อต", receive: "รับสินค้าเข้า", adjust: "ปรับสต็อค" }[t]}
+          </button>
+        ))}
+      </div>
+
+      {/* Summary */}
+      {tab === "summary" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 font-semibold text-gray-700">สต็อคตามสินค้า</div>
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-xs text-gray-500">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">สินค้า</th>
+                  <th className="text-right px-4 py-2 font-medium">คงเหลือ (กล่อง)</th>
+                  <th className="text-center px-4 py-2 font-medium">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {productStock.map(p => {
+                  const isLow = p.low_stock_threshold != null && p.total_remaining <= p.low_stock_threshold;
+                  return (
+                    <tr key={p.product_id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5">{p.name}</td>
+                      <td className="px-4 py-2.5 text-right font-medium">{p.total_remaining.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        {isLow && p.total_remaining === 0 ? (
+                          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">หมด</span>
+                        ) : isLow ? (
+                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">ใกล้หมด</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="font-semibold text-gray-700 mb-3">การปรับสต็อคล่าสุด</div>
+            {recentAdjustments.length === 0 ? <p className="text-sm text-gray-400">ยังไม่มีการปรับ</p> : (
+              <div className="space-y-2 text-sm">
+                {recentAdjustments.slice(0, 10).map(a => (
+                  <div key={a.id} className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="font-mono text-gray-500 text-xs">{(a.lot as unknown as {lot_number:string})?.lot_number}</span>
+                      <span className="ml-2 text-gray-600">{(a.lot as unknown as {product:{name:string}|null})?.product?.name}</span>
+                      <div className="text-xs text-gray-400">{ADJUSTMENT_REASONS[a.reason] ?? a.reason}</div>
+                    </div>
+                    <span className={`font-semibold shrink-0 ${a.quantity > 0 ? "text-green-600" : "text-red-600"}`}>
+                      {a.quantity > 0 ? "+" : ""}{a.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lots */}
+      {tab === "lots" && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-500">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">เลขล็อต</th>
+                <th className="text-left px-4 py-3 font-medium">สินค้า</th>
+                <th className="text-left px-4 py-3 font-medium">วันรับ</th>
+                <th className="text-right px-4 py-3 font-medium">รับเข้า</th>
+                <th className="text-right px-4 py-3 font-medium">ขายออก</th>
+                <th className="text-right px-4 py-3 font-medium">ปรับสต็อค</th>
+                <th className="text-right px-4 py-3 font-medium">คงเหลือ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {lots.map(l => (
+                <tr key={l.lot_id} className="hover:bg-gray-50">
+                  <td className="px-4 py-2.5 font-mono text-gray-600">{l.lot_number}</td>
+                  <td className="px-4 py-2.5">{(l as unknown as {product:{name:string}|null})?.product?.name}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{formatDateTH(l.date_received)}</td>
+                  <td className="px-4 py-2.5 text-right">{l.boxes_received.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-right text-red-500">{l.boxes_sold > 0 ? `-${l.boxes_sold}` : "0"}</td>
+                  <td className="px-4 py-2.5 text-right text-blue-500">{l.adjustment_total !== 0 ? (l.adjustment_total > 0 ? `+${l.adjustment_total}` : l.adjustment_total) : "0"}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold">{l.remaining_boxes.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Receive goods */}
+      {tab === "receive" && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-lg">
+          <h2 className="font-semibold text-gray-700 mb-4">รับสินค้าเข้าสต็อค</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">สินค้า</label>
+              <select value={rcvProduct} onChange={e => setRcvProduct(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="">-- เลือกสินค้า --</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">วันที่รับสินค้า</label>
+              <input type="date" value={rcvDate} onChange={e => setRcvDate(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">เลขล็อต</label>
+              <input value={rcvLotNum} onChange={e => setRcvLotNum(e.target.value)}
+                placeholder="เช่น 256911031"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <p className="text-xs text-gray-400 mt-1">ระบบเติมเลขล็อตให้อัตโนมัติ สามารถแก้ไขได้</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">จำนวนกล่องที่รับ</label>
+              <input type="number" min={1} value={rcvBoxes} onChange={e => setRcvBoxes(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            {rcvError && <div className="text-sm text-red-600">{rcvError}</div>}
+            <button onClick={handleReceiveLot} disabled={rcvSaving}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50">
+              {rcvSaving ? "กำลังบันทึก..." : "บันทึกการรับสินค้า"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust stock */}
+      {tab === "adjust" && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-lg">
+          <h2 className="font-semibold text-gray-700 mb-4">ปรับสต็อค</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">เลขล็อต</label>
+              <div className="flex gap-2">
+                <input value={adjLotNum} onChange={e => { setAdjLotNum(e.target.value); setAdjLotId(""); setAdjLotInfo(null); setAdjLotError(null); }}
+                  onBlur={lookupAdjustLot} placeholder="กรอกเลขล็อต"
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                <button onClick={lookupAdjustLot} className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-sm rounded-lg">ค้นหา</button>
+              </div>
+              {adjLotError && <p className="text-xs text-red-600 mt-1">{adjLotError}</p>}
+              {adjLotInfo && (
+                <p className="text-xs text-green-700 mt-1">{adjLotInfo.product_name} — เหลือ {adjLotInfo.remaining} กล่อง</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">จำนวน (บวก = เพิ่ม, ลบ = ลด)</label>
+              <input type="number" value={adjQty} onChange={e => setAdjQty(e.target.value)}
+                placeholder="เช่น 10 หรือ -5"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">เหตุผล</label>
+              <select value={adjReason} onChange={e => setAdjReason(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                {Object.entries(ADJUSTMENT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">หมายเหตุ (ไม่บังคับ)</label>
+              <textarea value={adjNote} onChange={e => setAdjNote(e.target.value)} rows={2}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            {adjError && <div className="text-sm text-red-600">{adjError}</div>}
+            <button onClick={handleAdjust} disabled={adjSaving}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50">
+              {adjSaving ? "กำลังบันทึก..." : "บันทึกการปรับสต็อค"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
