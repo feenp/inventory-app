@@ -36,7 +36,6 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   const [filterProduct, setFilterProduct] = useState("");
   const [filterPaid, setFilterPaid] = useState(initialPaid === "false" ? "false" : "");
   const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -52,12 +51,11 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     if (filterPaid === "true") query = query.eq("is_paid", true);
     if (filterPaid === "false") query = query.eq("is_paid", false);
     if (filterDateFrom) query = query.gte("order_date", filterDateFrom);
-    if (filterDateTo) query = query.lte("order_date", filterDateTo);
 
     const { data } = await query;
     setOrders((data as unknown as Order[]) ?? []);
     setLoading(false);
-  }, [supabase, filterCustomer, filterPaid, filterDateFrom, filterDateTo]);
+  }, [supabase, filterCustomer, filterPaid, filterDateFrom]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -80,7 +78,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     <div>
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <input placeholder="ค้นหา เลขออเดอร์/ลูกค้า/สินค้า" value={search} onChange={e => setSearch(e.target.value)}
             className="col-span-2 md:col-span-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)}
@@ -95,8 +93,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
             <option value="false">ค้างชำระ</option>
           </select>
           <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+            title="แสดงออเดอร์ตั้งแต่วันที่นี้"
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           <button onClick={fetchOrders}
             className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-medium rounded-lg px-3 py-2">ค้นหา</button>

@@ -201,6 +201,22 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
   const grandTotal = lines.reduce((sum, l) => sum + (parseInt(l.quantity) || 0) * (parseFloat(l.unit_price) || 0), 0);
   const totalBoxes = lines.reduce((sum, l) => sum + (parseInt(l.quantity) || 0), 0);
 
+  function resetForm() {
+    const freshToday = new Date().toISOString().slice(0, 10);
+    setOrderDate(freshToday);
+    setCustomerId("");
+    setNewCustomerName("");
+    setShowNewCustomer(false);
+    setIsPaid(false);
+    setPaymentChannelId("");
+    setBillCompany(false);
+    setBillCash(false);
+    setNote("");
+    setLines([newLine()]);
+    setDropdownState({});
+    setSaveError(null);
+  }
+
   async function handleSave() {
     setSaveError(null);
     if (!customerId && !newCustomerName.trim()) return setSaveError("กรุณาเลือกหรือกรอกชื่อลูกค้า");
@@ -279,6 +295,7 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
           entity_id: order.id, entity_label: orderNumber,
           after_data: { orderNumber, date: orderDate, customerId: resolvedCustomerId, lines: linePayloads, isPaid, billCompany, billCash },
         });
+        resetForm();
         router.push(`/orders/${order.id}`);
       }
     } catch (e: unknown) {
