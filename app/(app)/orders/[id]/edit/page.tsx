@@ -27,7 +27,8 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
     quantity: number;
     unit_price: number;
     is_price_adjusted: boolean;
-    lot: { lot_number: string; product: { name: string; standard_price: number | null } | null } | null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lot: any;
   }) => ({
     lot_id: l.lot_id,
     lot_number: l.lot?.lot_number ?? "",
