@@ -19,6 +19,8 @@ interface Order {
   order_date: string;
   is_paid: boolean;
   payment_channel_id: string | null;
+  bill_company: boolean;
+  bill_cash: boolean;
   note: string | null;
   customer: { id: string; name: string } | null;
   payment_channel: { name: string } | null;
@@ -93,12 +95,15 @@ export default function OrderDetail({ order, paymentChannels, customers }: {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
         <button onClick={() => router.back()} className="text-gray-400 hover:text-gray-600">← กลับ</button>
         <h1 className="text-2xl font-bold text-gray-800">ออเดอร์ {order.order_number}</h1>
         <span className={`text-sm px-3 py-1 rounded-full font-medium ${order.is_paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
           {order.is_paid ? "ชำระแล้ว" : "ค้างชำระ"}
         </span>
+        <a href={`/orders/${order.id}/edit`} className="ml-auto text-sm px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-medium transition-colors">
+          แก้ไขออเดอร์
+        </a>
       </div>
 
       {/* Info */}
@@ -108,6 +113,14 @@ export default function OrderDetail({ order, paymentChannels, customers }: {
           <div><div className="text-gray-400 text-xs mb-1">ลูกค้า</div><div className="font-medium">{order.customer?.name}</div></div>
           <div><div className="text-gray-400 text-xs mb-1">ช่องทางชำระ</div><div className="font-medium">{order.payment_channel?.name ?? "-"}</div></div>
           <div><div className="text-gray-400 text-xs mb-1">หมายเหตุ</div><div className="font-medium">{order.note ?? "-"}</div></div>
+          <div>
+            <div className="text-gray-400 text-xs mb-1">บิล</div>
+            <div className="font-medium text-sm flex gap-2">
+              {order.bill_company && <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">บริษัท</span>}
+              {order.bill_cash && <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs">เงินสด</span>}
+              {!order.bill_company && !order.bill_cash && <span className="text-gray-400">-</span>}
+            </div>
+          </div>
         </div>
       </div>
 

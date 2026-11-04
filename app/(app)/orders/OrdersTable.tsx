@@ -12,9 +12,11 @@ interface Order {
   order_number: string;
   order_date: string;
   is_paid: boolean;
+  bill_company: boolean;
+  bill_cash: boolean;
   customer: { name: string } | null;
+  payment_channel: { name: string } | null;
   order_lines: { quantity: number; unit_price: number; lot: { product: { name: string } | null } | null }[];
-  total?: number;
 }
 
 export default function OrdersTable({ customers, products, initialPaid, initialSearch }: {
@@ -24,11 +26,9 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   initialSearch?: string;
 }) {
   const supabase = createClient();
-
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters
   const [search, setSearch] = useState(initialSearch ?? "");
   const [filterCustomer, setFilterCustomer] = useState("");
   const [filterProduct, setFilterProduct] = useState("");
@@ -40,7 +40,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     setLoading(true);
     let query = supabase
       .from("orders")
-      .select("id, order_number, order_date, is_paid, customer:customers(name), order_lines(quantity, unit_price, lot:lots(product:products(name)))")
+      .select("id, order_number, order_date, is_paid, bill_company, bill_cash, customer:customers(name), payment_channel:payment_channels(name), order_lines(quantity, unit_price, lot:lots(product:products(name)))")
       .is("deleted_at", null)
       .order("order_date", { ascending: false })
       .order("created_at", { ascending: false })
@@ -68,14 +68,8 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
       if (!matchNum && !matchCust && !matchProduct) return false;
     }
     if (filterProduct) {
-      if (!o.order_lines.some(l => {
-        const { data: products } = { data: null };
-        return l.lot?.product?.name === products;
-      })) {
-        // check by name since we have name not id here — simplified
-        const prod = products.find(p => p.id === filterProduct);
-        if (prod && !o.order_lines.some(l => l.lot?.product?.name === prod.name)) return false;
-      }
+      const prod = products.find(p => p.id === filterProduct);
+      if (prod && !o.order_lines.some(l => l.lot?.product?.name === prod.name)) return false;
     }
     return true;
   });
@@ -98,9 +92,9 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
             <option value="true">ชำระแล้ว</option>
             <option value="false">ค้างชำระ</option>
           </select>
-          <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} placeholder="จากวันที่"
+          <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} placeholder="ถึงวันที่"
+          <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           <button onClick={fetchOrders}
             className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-medium rounded-lg px-3 py-2">ค้นหา</button>
@@ -120,8 +114,8 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
                 <th className="text-left px-4 py-3 font-medium">เลขออเดอร์</th>
                 <th className="text-left px-4 py-3 font-medium">วันที่</th>
                 <th className="text-left px-4 py-3 font-medium">ลูกค้า</th>
-                <th className="text-left px-4 py-3 font-medium">สินค้า</th>
-                <th className="text-right px-4 py-3 font-medium">กล่อง</th>
+                <th className="text-left px-4 py-3 font-medium">สินค้า (กล่อง)</th>
+                <th className="text-left px-4 py-3 font-medium">ช่องทางชำระ</th>
                 <th className="text-right px-4 py-3 font-medium">ยอดรวม</th>
                 <th className="text-center px-4 py-3 font-medium">สถานะ</th>
                 <th className="px-4 py-3"></th>
@@ -130,23 +124,35 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
             <tbody className="divide-y divide-gray-100">
               {filtered.map(o => {
                 const total = o.order_lines.reduce((s, l) => s + l.quantity * l.unit_price, 0);
-                const boxes = o.order_lines.reduce((s, l) => s + l.quantity, 0);
-                const productNames = [...new Set(o.order_lines.map(l => l.lot?.product?.name).filter(Boolean))].join(", ");
+                // Group by product name, sum quantities
+                const productQtyMap: Record<string, number> = {};
+                for (const l of o.order_lines) {
+                  const name = l.lot?.product?.name ?? "ไม่ระบุ";
+                  productQtyMap[name] = (productQtyMap[name] ?? 0) + l.quantity;
+                }
+                const productSummary = Object.entries(productQtyMap).map(([name, qty]) => `${name} (${qty})`).join(", ");
                 return (
                   <tr key={o.id} className={`hover:bg-gray-50 ${!o.is_paid ? "bg-red-50/30" : ""}`}>
-                    <td className="px-4 py-3 font-mono text-gray-600">{o.order_number}</td>
+                    <td className="px-4 py-3 font-mono text-gray-600">
+                      {o.order_number}
+                      <div className="flex gap-1 mt-0.5">
+                        {o.bill_company && <span className="text-xs bg-blue-100 text-blue-600 px-1 rounded">บริษัท</span>}
+                        {o.bill_cash && <span className="text-xs bg-gray-100 text-gray-500 px-1 rounded">เงินสด</span>}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{formatDateTH(o.order_date)}</td>
                     <td className="px-4 py-3 font-medium">{o.customer?.name}</td>
-                    <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{productNames || "-"}</td>
-                    <td className="px-4 py-3 text-right text-gray-600">{boxes.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-gray-600 max-w-xs">{productSummary || "-"}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{o.payment_channel?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold">฿{formatBaht(total)}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`text-xs px-2 py-1 rounded-full font-medium ${o.is_paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
                         {o.is_paid ? "ชำระแล้ว" : "ค้างชำระ"}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <Link href={`/orders/${o.id}`} className="text-blue-600 hover:underline text-xs">ดู</Link>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <Link href={`/orders/${o.id}`} className="text-blue-600 hover:underline text-xs mr-2">ดู</Link>
+                      <Link href={`/orders/${o.id}/edit`} className="text-gray-400 hover:text-blue-600 text-xs">แก้ไข</Link>
                     </td>
                   </tr>
                 );
