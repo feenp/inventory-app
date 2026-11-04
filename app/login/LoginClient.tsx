@@ -14,6 +14,10 @@ export default function LoginClient() {
       provider: "google",
       options: {
         redirectTo: `${location.origin}/auth/callback`,
+        queryParams: {
+          // Always show account picker so users can switch accounts after logout
+          prompt: "select_account",
+        },
       },
     });
     if (error) {

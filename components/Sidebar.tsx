@@ -25,6 +25,8 @@ export default function Sidebar({ user }: { user: User }) {
 
   async function handleSignOut() {
     await supabase.auth.signOut();
+    // Invalidate Next.js server-component cache so the new session is fresh
+    router.refresh();
     router.push("/login");
   }
 

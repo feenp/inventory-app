@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTH } from "@/lib/utils";
-import { exportAsA4Png, todayString } from "@/lib/exportImage";
+import { exportAsA4Png } from "@/lib/exportImage";
 
 interface ProductRow {
   product_id: string;
@@ -13,73 +13,140 @@ interface ProductRow {
   soldToday: number;
 }
 
+// Thailand is UTC+7. Use Bangkok date so "today" matches what users see on-screen.
+function getBangkokToday(): string {
+  return new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// Returns the UTC ISO timestamp for the start of the day AFTER dateStr in Bangkok time.
+// Used to filter adjustments: include everything created before midnight Bangkok on the next day.
+function nextDayBangkokISO(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00+07:00");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
 export default function StockReportClient() {
   const supabase = createClient();
   const contentRef = useRef<HTMLDivElement>(null);
 
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const [selectedDate, setSelectedDate] = useState(todayISO);
+  const bangkokToday = getBangkokToday();
+  const [selectedDate, setSelectedDate] = useState(bangkokToday);
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async (date: string) => {
     setLoading(true);
     try {
-      const [{ data: products }, { data: lots }, { data: orders }] = await Promise.all([
-        supabase
-          .from("products")
-          .select("id, name, low_stock_threshold")
-          .is("deleted_at", null)
-          .order("name"),
-        supabase
-          .from("lots")
-          .select("lot_id, product_id, boxes_received, date_received")
-          .is("deleted_at", null)
-          .lte("date_received", date),
-        supabase
-          .from("orders")
-          .select("order_date, order_lines(lot_id, quantity)")
-          .is("deleted_at", null)
-          .lte("order_date", date),
-      ]);
+      const isToday = date === getBangkokToday();
 
-      // Build lot_id → product_id map, and accumulate received counts
-      const receivedUpTo: Record<string, number> = {};
-      const receivedOnDate: Record<string, number> = {};
-      for (const lot of (lots ?? []) as { lot_id: string; product_id: string; boxes_received: number; date_received: string }[]) {
-        receivedUpTo[lot.product_id] = (receivedUpTo[lot.product_id] ?? 0) + lot.boxes_received;
-        if (lot.date_received === date) {
-          receivedOnDate[lot.product_id] = (receivedOnDate[lot.product_id] ?? 0) + lot.boxes_received;
+      if (isToday) {
+        // For today use product_stock view — it is the authoritative live calculation
+        // (it incorporates lot_remaining which already handles adjustments and soft deletes).
+        const [{ data: productStock }, { data: todayLots }, { data: todayOrders }] = await Promise.all([
+          supabase.from("product_stock").select("product_id, name, low_stock_threshold, total_remaining").order("name"),
+          supabase.from("lots")
+            .select("product_id, boxes_received")
+            .eq("date_received", date)
+            .is("deleted_at", null),
+          supabase.from("orders")
+            // join order_lines → lots to get product_id directly, avoiding an extra round-trip
+            .select("order_lines(quantity, lot:lots(product_id))")
+            .eq("order_date", date)
+            .is("deleted_at", null),
+        ]);
+
+        const receivedToday: Record<string, number> = {};
+        for (const lot of (todayLots ?? []) as { product_id: string; boxes_received: number }[]) {
+          receivedToday[lot.product_id] = (receivedToday[lot.product_id] ?? 0) + lot.boxes_received;
         }
-      }
 
-      // Build lot_id → product_id map for order_lines lookups
-      const lotProductMap: Record<string, string> = {};
-      for (const lot of (lots ?? []) as { lot_id: string; product_id: string }[]) {
-        lotProductMap[lot.lot_id] = lot.product_id;
-      }
-
-      const soldUpTo: Record<string, number> = {};
-      const soldOnDate: Record<string, number> = {};
-      for (const order of (orders ?? []) as { order_date: string; order_lines: { lot_id: string; quantity: number }[] }[]) {
-        for (const line of order.order_lines) {
-          const pid = lotProductMap[line.lot_id];
-          if (!pid) continue;
-          soldUpTo[pid] = (soldUpTo[pid] ?? 0) + line.quantity;
-          if (order.order_date === date) {
-            soldOnDate[pid] = (soldOnDate[pid] ?? 0) + line.quantity;
+        const soldToday: Record<string, number> = {};
+        for (const order of (todayOrders ?? []) as unknown as { order_lines: { quantity: number; lot: { product_id: string } | null }[] }[]) {
+          for (const line of order.order_lines) {
+            const pid = line.lot?.product_id;
+            if (!pid) continue;
+            soldToday[pid] = (soldToday[pid] ?? 0) + line.quantity;
           }
         }
-      }
 
-      setRows((products ?? []).map(p => ({
-        product_id: p.id,
-        name: p.name,
-        total_remaining: (receivedUpTo[p.id] ?? 0) - (soldUpTo[p.id] ?? 0),
-        low_stock_threshold: p.low_stock_threshold,
-        receivedToday: receivedOnDate[p.id] ?? 0,
-        soldToday: soldOnDate[p.id] ?? 0,
-      })));
+        setRows(
+          ((productStock ?? []) as { product_id: string; name: string; low_stock_threshold: number | null; total_remaining: number }[])
+            .map(p => ({
+              product_id: p.product_id,
+              name: p.name,
+              total_remaining: p.total_remaining,
+              low_stock_threshold: p.low_stock_threshold,
+              receivedToday: receivedToday[p.product_id] ?? 0,
+              soldToday: soldToday[p.product_id] ?? 0,
+            }))
+        );
+      } else {
+        // Historical: reconstruct stock as it stood at the END of selectedDate.
+        // KEY FIX: lots table PK is `id` — the `lot_id` alias only exists on the lot_remaining VIEW.
+        // We also include stock_adjustments (which the product_stock view counts via lot_remaining).
+        const [{ data: products }, { data: lots }, { data: orders }, { data: adjustments }] = await Promise.all([
+          supabase.from("products").select("id, name, low_stock_threshold").is("deleted_at", null).order("name"),
+          supabase.from("lots")
+            .select("id, product_id, boxes_received, date_received")
+            .is("deleted_at", null)
+            .lte("date_received", date),
+          supabase.from("orders")
+            .select("order_date, order_lines(lot_id, quantity)")
+            .is("deleted_at", null)
+            .lte("order_date", date),
+          // Include adjustments created up to end-of-day in Bangkok time
+          supabase.from("stock_adjustments")
+            .select("lot_id, quantity")
+            .lt("created_at", nextDayBangkokISO(date)),
+        ]);
+
+        // Build lots.id → product_id map (lots.id is the PK, referenced by order_lines.lot_id)
+        const lotProductMap: Record<string, string> = {};
+        const receivedUpTo: Record<string, number> = {};
+        const receivedOnDate: Record<string, number> = {};
+        for (const lot of (lots ?? []) as { id: string; product_id: string; boxes_received: number; date_received: string }[]) {
+          lotProductMap[lot.id] = lot.product_id;
+          receivedUpTo[lot.product_id] = (receivedUpTo[lot.product_id] ?? 0) + lot.boxes_received;
+          if (lot.date_received === date) {
+            receivedOnDate[lot.product_id] = (receivedOnDate[lot.product_id] ?? 0) + lot.boxes_received;
+          }
+        }
+
+        const soldUpTo: Record<string, number> = {};
+        const soldOnDate: Record<string, number> = {};
+        for (const order of (orders ?? []) as { order_date: string; order_lines: { lot_id: string; quantity: number }[] }[]) {
+          for (const line of order.order_lines) {
+            // line.lot_id references lots.id — now correctly maps using lots.id as key
+            const pid = lotProductMap[line.lot_id];
+            if (!pid) continue;
+            soldUpTo[pid] = (soldUpTo[pid] ?? 0) + line.quantity;
+            if (order.order_date === date) {
+              soldOnDate[pid] = (soldOnDate[pid] ?? 0) + line.quantity;
+            }
+          }
+        }
+
+        // Stock adjustments: positive = stock added, negative = stock reduced
+        const adjByProduct: Record<string, number> = {};
+        for (const adj of (adjustments ?? []) as { lot_id: string; quantity: number }[]) {
+          const pid = lotProductMap[adj.lot_id];
+          if (!pid) continue;
+          adjByProduct[pid] = (adjByProduct[pid] ?? 0) + adj.quantity;
+        }
+
+        setRows(
+          ((products ?? []) as { id: string; name: string; low_stock_threshold: number | null }[])
+            .map(p => ({
+              product_id: p.id,
+              name: p.name,
+              total_remaining: (receivedUpTo[p.id] ?? 0) - (soldUpTo[p.id] ?? 0) + (adjByProduct[p.id] ?? 0),
+              low_stock_threshold: p.low_stock_threshold,
+              receivedToday: receivedOnDate[p.id] ?? 0,
+              soldToday: soldOnDate[p.id] ?? 0,
+            }))
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -95,7 +162,8 @@ export default function StockReportClient() {
   const totalRemaining = rows.reduce((s, p) => s + p.total_remaining, 0);
   const totalReceived = rows.reduce((s, p) => s + p.receivedToday, 0);
   const totalSold = rows.reduce((s, p) => s + p.soldToday, 0);
-  const isToday = selectedDate === todayISO;
+  const isToday = selectedDate === getBangkokToday();
+  const maxDate = getBangkokToday();
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -107,7 +175,7 @@ export default function StockReportClient() {
           <input
             type="date"
             value={selectedDate}
-            max={todayISO}
+            max={maxDate}
             onChange={e => setSelectedDate(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
@@ -160,7 +228,9 @@ export default function StockReportClient() {
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
                 <th className="text-left px-4 py-3 font-medium">สินค้า</th>
-                <th className="text-right px-4 py-3 font-medium">สต็อคคงเหลือ ณ วันนั้น</th>
+                <th className="text-right px-4 py-3 font-medium">
+                  {isToday ? "สต็อคคงเหลือ" : "สต็อคคงเหลือ ณ วันนั้น"}
+                </th>
                 <th className="text-right px-4 py-3 font-medium">รับเข้า{isToday ? "วันนี้" : "วันนั้น"}</th>
                 <th className="text-right px-4 py-3 font-medium">ขายออก{isToday ? "วันนี้" : "วันนั้น"}</th>
                 <th className="text-center px-4 py-3 font-medium">สถานะ</th>
