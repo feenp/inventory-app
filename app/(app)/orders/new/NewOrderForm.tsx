@@ -32,14 +32,6 @@ function newLine(): OrderLine {
   return { id: crypto.randomUUID(), lot_number: "", quantity: "", unit_price: "", is_price_adjusted: false };
 }
 
-function getDefaultLotPrefix(): string {
-  const now = new Date();
-  const beYear = now.getFullYear() + 543;
-  const yy = String(beYear).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `${yy}${mm}${dd}`;
-}
 
 export default function NewOrderForm({ customers, paymentChannels, editOrder }: {
   customers: Customer[];
@@ -115,18 +107,6 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
     }
     loadLots();
   }, [supabase]);
-
-  // Set default lot number prefix on new lines when date changes
-  useEffect(() => {
-    if (isEdit) return;
-    const prefix = getDefaultLotPrefix();
-    setLines(prev => prev.map(l =>
-      l.lot_number === "" || /^\d{6,8}0*\d*$/.test(l.lot_number)
-        ? { ...l, lot_number: prefix + "01" }
-        : l
-    ));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (isEdit) return;
@@ -448,10 +428,8 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
             );
           })}
         </div>
-        <button onClick={() => {
-          const prefix = getDefaultLotPrefix();
-          setLines(prev => [...prev, { ...newLine(), lot_number: prefix + "01" }]);
-        }} className="mt-3 text-sm text-blue-600 hover:text-blue-800">+ เพิ่มรายการ</button>
+        <button onClick={() => setLines(prev => [...prev, newLine()])}
+          className="mt-3 text-sm text-blue-600 hover:text-blue-800">+ เพิ่มรายการ</button>
       </div>
 
       {/* Payment & bill type */}

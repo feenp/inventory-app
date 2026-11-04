@@ -1,14 +1,16 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTH } from "@/lib/utils";
 import type { LotRemaining, ProductStock, StockAdjustment } from "@/lib/types";
 import { ADJUSTMENT_REASONS } from "@/lib/types";
+import { exportAsA4Png, todayString } from "@/lib/exportImage";
 
 interface Product { id: string; name: string; standard_price: number | null }
 
 export default function StockClient({ products }: { products: Product[] }) {
   const supabase = createClient();
+  const summaryRef = useRef<HTMLDivElement>(null);
   const [productStock, setProductStock] = useState<ProductStock[]>([]);
   const [lots, setLots] = useState<LotRemaining[]>([]);
   const [recentAdjustments, setRecentAdjustments] = useState<StockAdjustment[]>([]);
@@ -130,6 +132,15 @@ export default function StockClient({ products }: { products: Product[] }) {
 
       {/* Summary */}
       {tab === "summary" && (
+        <div>
+        <div className="flex justify-end mb-3" data-export-hidden="true">
+          <button
+            onClick={() => summaryRef.current && exportAsA4Png(summaryRef.current, `ภาพรวมสต็อค_${todayString()}.png`)}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
+            ดาวน์โหลดรูปภาพ
+          </button>
+        </div>
+        <div ref={summaryRef} className="bg-white p-4 rounded-xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100 font-semibold text-gray-700">สต็อคตามสินค้า</div>
@@ -181,6 +192,8 @@ export default function StockClient({ products }: { products: Product[] }) {
               </div>
             )}
           </div>
+        </div>
+        </div>
         </div>
       )}
 

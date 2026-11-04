@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatBaht, formatDateTH } from "@/lib/utils";
+import { exportAsA4Png, todayString } from "@/lib/exportImage";
 import Link from "next/link";
 
 interface Customer { id: string; name: string }
@@ -26,6 +27,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   initialSearch?: string;
 }) {
   const supabase = createClient();
+  const tableRef = useRef<HTMLDivElement>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -101,8 +103,17 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
         </div>
       </div>
 
+      {/* Export button */}
+      <div className="flex justify-end mb-3" data-export-hidden="true">
+        <button
+          onClick={() => tableRef.current && exportAsA4Png(tableRef.current, `ออเดอร์_${todayString()}.png`)}
+          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
+          ดาวน์โหลดรูปภาพ
+        </button>
+      </div>
+
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div ref={tableRef} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-gray-400">กำลังโหลด...</div>
         ) : filtered.length === 0 ? (
