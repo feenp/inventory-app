@@ -77,7 +77,7 @@ export default function StockClient({ products }: { products: Product[] }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [{ data: ps }, { data: ls }, { data: adj }] = await Promise.all([
-      supabase.from("product_stock").select("*").order("name"),
+      supabase.from("product_stock").select("*").order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
       supabase.from("lot_remaining").select("*, product:products(name, standard_price)").is("deleted_at", null).order("date_received", { ascending: false }),
       supabase.from("stock_adjustments").select("*, lot:lots(lot_number, product:products(name))").order("created_at", { ascending: false }).limit(30),
     ]);

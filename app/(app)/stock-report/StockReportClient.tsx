@@ -55,7 +55,7 @@ export default function StockReportClient() {
         // Opening = total_remaining - receivedToday + soldToday
         // This definition makes Opening + Received - Sold = Remaining hold exactly.
         const [{ data: productStock }, { data: todayLots }, { data: todayOrders }] = await Promise.all([
-          supabase.from("product_stock").select("product_id, name, low_stock_threshold, total_remaining").order("name"),
+          supabase.from("product_stock").select("product_id, name, low_stock_threshold, total_remaining").order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
           supabase.from("lots")
             .select("product_id, boxes_received")
             .eq("date_received", date)
@@ -102,7 +102,7 @@ export default function StockReportClient() {
         const yesterday = prevDay(date);
 
         const [{ data: products }, { data: lots }, { data: orders }, { data: adjustments }] = await Promise.all([
-          supabase.from("products").select("id, name, low_stock_threshold").is("deleted_at", null).order("name"),
+          supabase.from("products").select("id, name, low_stock_threshold").is("deleted_at", null).order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
           supabase.from("lots").select("id, product_id, boxes_received, date_received").is("deleted_at", null).lte("date_received", date),
           supabase.from("orders").select("order_date, order_lines(lot_id, quantity)").is("deleted_at", null).lte("order_date", date),
           supabase.from("stock_adjustments").select("lot_id, quantity").lt("created_at", nextDayBangkokISO(date)),

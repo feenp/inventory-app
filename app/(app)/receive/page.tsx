@@ -23,7 +23,7 @@ export default function ReceivePage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [{ data: prods }, { data: ls }] = await Promise.all([
-      supabase.from("products").select("id, name, standard_price").is("deleted_at", null).order("name"),
+      supabase.from("products").select("id, name, standard_price").is("deleted_at", null).order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
       supabase.from("lots").select("lot_number").is("deleted_at", null),
     ]);
     setProducts((prods ?? []) as Product[]);

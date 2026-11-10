@@ -3,6 +3,7 @@ export interface Product {
   name: string;
   standard_price: number | null;
   low_stock_threshold: number | null;
+  sort_order: number | null;
   deleted_at: string | null;
   created_at: string;
 }
@@ -105,6 +106,7 @@ export interface ProductStock {
   name: string;
   standard_price: number | null;
   low_stock_threshold: number | null;
+  sort_order: number | null;
   total_remaining: number;
 }
 

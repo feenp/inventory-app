@@ -4,7 +4,13 @@ import { createClient } from "@/lib/supabase/client";
 import { formatBaht } from "@/lib/utils";
 import ColumnOrderPicker, { type ColDef } from "@/components/ColumnOrderPicker";
 
-interface Product { id: string; name: string; standard_price: number | null; low_stock_threshold: number | null }
+interface Product {
+  id: string;
+  name: string;
+  standard_price: number | null;
+  low_stock_threshold: number | null;
+  sort_order: number | null;
+}
 interface PaymentChannel { id: string; name: string }
 
 const PRODUCTS_COLS: ColDef[] = [
@@ -20,6 +26,11 @@ export default function PricesPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [channels, setChannels] = useState<PaymentChannel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  // Row drag-and-drop state
+  const [dragRowIdx, setDragRowIdx] = useState<number | null>(null);
+  const [overRowIdx, setOverRowIdx] = useState<number | null>(null);
 
   // Column ordering
   const [prodsColOrder, setProdsColOrder] = useState<string[]>(PRODUCTS_DEFAULT_ORDER);
@@ -65,7 +76,11 @@ export default function PricesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [{ data: prods }, { data: chans }] = await Promise.all([
-      supabase.from("products").select("id, name, standard_price, low_stock_threshold").is("deleted_at", null).order("name"),
+      supabase.from("products")
+        .select("id, name, standard_price, low_stock_threshold, sort_order")
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
       supabase.from("payment_channels").select("id, name").is("deleted_at", null).order("name"),
     ]);
     setProducts((prods ?? []) as Product[]);
@@ -75,13 +90,44 @@ export default function PricesPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  async function batchSaveSortOrder(ordered: Product[]) {
+    setSavingOrder(true);
+    await Promise.all(
+      ordered.map((p, i) =>
+        supabase.from("products").update({ sort_order: (i + 1) * 10 }).eq("id", p.id)
+      )
+    );
+    setSavingOrder(false);
+  }
+
+  async function handleRowDrop(dropIdx: number) {
+    if (dragRowIdx === null || dragRowIdx === dropIdx) {
+      setDragRowIdx(null); setOverRowIdx(null); return;
+    }
+    const newOrder = [...products];
+    const [moved] = newOrder.splice(dragRowIdx, 1);
+    newOrder.splice(dropIdx, 0, moved);
+    setProducts(newOrder);
+    setDragRowIdx(null); setOverRowIdx(null);
+    await batchSaveSortOrder(newOrder);
+  }
+
+  async function resetRowOrder() {
+    const sorted = [...products].sort((a, b) => a.name.localeCompare(b.name, "th"));
+    setProducts(sorted);
+    await batchSaveSortOrder(sorted);
+  }
+
   async function addProduct() {
     setAddProductError(null);
     if (!newProductName.trim()) return setAddProductError("กรุณากรอกชื่อสินค้า");
     setAddingProduct(true);
     const { data: { user } } = await supabase.auth.getUser();
     const price = newProductPrice ? parseFloat(newProductPrice) : null;
-    const { data, error } = await supabase.from("products").insert({ name: newProductName.trim(), standard_price: price }).select("id").single();
+    const maxOrder = products.reduce((m, p) => Math.max(m, p.sort_order ?? 0), 0);
+    const { data, error } = await supabase.from("products").insert({
+      name: newProductName.trim(), standard_price: price, sort_order: maxOrder + 10,
+    }).select("id").single();
     if (error) { setAddProductError(error.message); setAddingProduct(false); return; }
     await supabase.from("change_history").insert({
       user_id: user?.id, user_email: user?.email,
@@ -153,6 +199,14 @@ export default function PricesPage() {
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-bold text-gray-900">รายการสินค้า</h2>
           <div className="flex items-center gap-2">
+            {savingOrder && <span className="text-xs text-blue-500 font-medium">กำลังบันทึก...</span>}
+            <button
+              onClick={resetRowOrder}
+              disabled={savingOrder}
+              className="text-xs text-gray-500 hover:text-gray-700 font-medium border border-gray-200 rounded px-2 py-1 disabled:opacity-40"
+            >
+              รีเซ็ตลำดับ
+            </button>
             <span className="text-sm text-gray-500 font-medium">{products.length} รายการ</span>
             <ColumnOrderPicker
               columns={PRODUCTS_COLS}
@@ -187,6 +241,8 @@ export default function PricesPage() {
         <table className="w-full">
           <thead className="bg-gray-100">
             <tr>
+              {/* Drag handle column header */}
+              <th className="w-8 px-2 py-2.5"></th>
               {prodsColOrder.map(key => {
                 const col = PRODUCTS_COLS.find(c => c.key === key)!;
                 const isRight = key !== "name";
@@ -201,7 +257,28 @@ export default function PricesPage() {
           </thead>
           <tbody>
             {products.map((p, i) => (
-              <tr key={p.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+              <tr
+                key={p.id}
+                draggable
+                onDragStart={() => setDragRowIdx(i)}
+                onDragOver={e => { e.preventDefault(); setOverRowIdx(i); }}
+                onDrop={() => handleRowDrop(i)}
+                onDragEnd={() => { setDragRowIdx(null); setOverRowIdx(null); }}
+                className={`transition-colors
+                  ${i % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                  ${overRowIdx === i && dragRowIdx !== i ? "outline outline-2 outline-blue-400 outline-offset-[-2px]" : ""}
+                  ${dragRowIdx === i ? "opacity-40" : ""}
+                `}
+              >
+                {/* Drag handle */}
+                <td className="w-8 px-2 py-3 cursor-grab select-none text-center text-gray-300 hover:text-gray-500">
+                  <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
+                    <circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/>
+                    <circle cx="3" cy="8" r="1.5"/><circle cx="9" cy="8" r="1.5"/>
+                    <circle cx="3" cy="13" r="1.5"/><circle cx="9" cy="13" r="1.5"/>
+                  </svg>
+                </td>
+
                 {editingProduct === p.id ? (
                   <>
                     {prodsColOrder.map(key => {
@@ -260,6 +337,10 @@ export default function PricesPage() {
             ))}
           </tbody>
         </table>
+
+        <div className="px-5 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-400">
+          ลากแถวเพื่อเรียงลำดับสินค้า — ลำดับนี้จะแสดงในทุกหน้าที่มีรายการสินค้า
+        </div>
       </div>
 
       {/* Payment channels */}
