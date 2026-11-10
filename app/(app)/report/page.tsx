@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatBaht, toBEYear } from "@/lib/utils";
 import { ADJUSTMENT_REASONS } from "@/lib/types";
 import { exportAsA4Png } from "@/lib/exportImage";
+import { fetchProductSortByName, sortByProductName } from "@/lib/productOrder";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const THAI_MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -41,7 +42,7 @@ export default function ReportPage() {
     const firstDay = new Date(year, month, 1).toISOString().slice(0, 10);
     const lastDay = new Date(year, month + 1, 0).toISOString().slice(0, 10);
 
-    const [{ data: orders }, { data: adjustments }, { data: productMeta }] = await Promise.all([
+    const [{ data: orders }, { data: adjustments }, productSortMap] = await Promise.all([
       supabase
         .from("orders")
         .select("id, order_date, is_paid, customer:customers(name), order_lines(quantity, unit_price, lot:lots(product:products(name)))")
@@ -53,19 +54,8 @@ export default function ReportPage() {
         .select("quantity, reason")
         .gte("created_at", firstDay)
         .lte("created_at", lastDay + "T23:59:59"),
-      supabase
-        .from("products")
-        .select("name, sort_order")
-        .is("deleted_at", null)
-        .order("sort_order", { ascending: true, nullsFirst: false })
-        .order("name"),
+      fetchProductSortByName(supabase),
     ]);
-
-    // Build product sort index (name → rank)
-    const productSortRank: Record<string, number> = {};
-    for (let i = 0; i < (productMeta ?? []).length; i++) {
-      productSortRank[(productMeta![i] as { name: string }).name] = i;
-    }
 
     const typedOrders = (orders ?? []) as unknown as {
       id: string; order_date: string; is_paid: boolean;
@@ -113,13 +103,11 @@ export default function ReportPage() {
         prodMap[n].baht += l.quantity * l.unit_price;
       }
     }
-    const productData: ProductData[] = Object.entries(prodMap)
-      .map(([name, d]) => ({ name, ...d }))
-      .sort((a, b) => {
-        const ra = productSortRank[a.name] ?? 999999;
-        const rb = productSortRank[b.name] ?? 999999;
-        return ra !== rb ? ra - rb : a.name.localeCompare(b.name, "th");
-      });
+    const productData: ProductData[] = sortByProductName(
+      Object.entries(prodMap).map(([name, d]) => ({ name, ...d })),
+      productSortMap,
+      p => p.name,
+    );
 
     // Unpaid by customer
     const unpaidByCust: Record<string, number> = {};
@@ -195,7 +183,7 @@ export default function ReportPage() {
           </div>
 
           {/* Summary cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <ReportCard label="ยอดขายรวม" value={`฿${formatBaht(report.totalSales)}`} />
             <ReportCard label="จำนวนออเดอร์" value={String(report.orderCount)} />
             <ReportCard label="กล่องที่ขาย" value={report.boxesSold.toLocaleString()} />
@@ -220,21 +208,21 @@ export default function ReportPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Top customers */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h2 className="font-bold text-gray-900 mb-4">ลูกค้าสูงสุด 5 อันดับ</h2>
+              <h2 className="text-lg font-bold text-gray-900 mb-4">ลูกค้าสูงสุด 5 อันดับ</h2>
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    <th className="text-left pb-2 text-sm font-bold text-gray-700">ลูกค้า</th>
-                    <th className="text-right pb-2 text-sm font-bold text-gray-700">ยอด</th>
-                    <th className="text-right pb-2 text-sm font-bold text-gray-700">%</th>
+                    <th className="text-left pb-2 text-base font-bold text-gray-700">ลูกค้า</th>
+                    <th className="text-right pb-2 text-base font-bold text-gray-700">ยอด</th>
+                    <th className="text-right pb-2 text-base font-bold text-gray-700">%</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.topCustomers.map((c, i) => (
                     <tr key={c.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                      <td className="py-1.5 text-base font-medium text-gray-900">{c.name}</td>
-                      <td className="py-1.5 text-right text-base font-semibold text-gray-900">฿{formatBaht(c.total)}</td>
-                      <td className="py-1.5 text-right text-sm text-gray-500">{c.share.toFixed(1)}%</td>
+                      <td className="py-2 text-lg font-medium text-gray-900">{c.name}</td>
+                      <td className="py-2 text-right text-lg font-semibold text-gray-900">฿{formatBaht(c.total)}</td>
+                      <td className="py-2 text-right text-base text-gray-500">{c.share.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -243,27 +231,27 @@ export default function ReportPage() {
 
             {/* Unpaid by customer */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h2 className="font-bold text-gray-900 mb-4">ยอดค้างชำระ (จากออเดอร์เดือนนี้)</h2>
+              <h2 className="text-lg font-bold text-gray-900 mb-4">ยอดค้างชำระ (จากออเดอร์เดือนนี้)</h2>
               {report.unpaidByCustomer.length === 0 ? (
-                <p className="text-sm text-gray-400">ไม่มียอดค้าง</p>
+                <p className="text-base text-gray-400">ไม่มียอดค้าง</p>
               ) : (
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-100">
-                      <th className="text-left pb-2 text-sm font-bold text-gray-700">ลูกค้า</th>
-                      <th className="text-right pb-2 text-sm font-bold text-gray-700">ค้างชำระ</th>
+                      <th className="text-left pb-2 text-base font-bold text-gray-700">ลูกค้า</th>
+                      <th className="text-right pb-2 text-base font-bold text-gray-700">ค้างชำระ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {report.unpaidByCustomer.map((c, i) => (
                       <tr key={c.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                        <td className="py-1.5 text-base font-medium text-gray-900">{c.name}</td>
-                        <td className="py-1.5 text-right text-base font-semibold text-orange-600">฿{formatBaht(c.total)}</td>
+                        <td className="py-2 text-lg font-medium text-gray-900">{c.name}</td>
+                        <td className="py-2 text-right text-lg font-semibold text-orange-600">฿{formatBaht(c.total)}</td>
                       </tr>
                     ))}
                     <tr className="border-t-2 border-gray-200 bg-gray-50">
-                      <td className="py-1.5 text-sm font-bold text-gray-700">รวม</td>
-                      <td className="py-1.5 text-right text-sm font-bold text-gray-900">฿{formatBaht(report.unpaidByCustomer.reduce((s,c)=>s+c.total,0))}</td>
+                      <td className="py-2 text-base font-bold text-gray-700">รวม</td>
+                      <td className="py-2 text-right text-base font-bold text-gray-900">฿{formatBaht(report.unpaidByCustomer.reduce((s,c)=>s+c.total,0))}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -274,7 +262,7 @@ export default function ReportPage() {
           {/* Sales by product */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="font-bold text-gray-900">ยอดขายตามสินค้า</h2>
+              <h2 className="text-lg font-bold text-gray-900">ยอดขายตามสินค้า</h2>
               <button
                 onClick={handleExportSalesByProduct}
                 data-export-hidden="true"
@@ -296,25 +284,25 @@ export default function ReportPage() {
               <table className="w-full">
                 <thead className="bg-gray-100">
                   <tr>
-                    <th className="text-left px-5 py-2.5 text-sm font-bold text-gray-700">สินค้า</th>
-                    <th className="text-right px-4 py-2.5 text-sm font-bold text-gray-700">กล่อง</th>
-                    <th className="text-right px-5 py-2.5 text-sm font-bold text-gray-700">ยอดรวม (฿)</th>
+                    <th className="text-left px-5 py-3 text-base font-bold text-gray-700">สินค้า</th>
+                    <th className="text-right px-4 py-3 text-base font-bold text-gray-700">กล่อง</th>
+                    <th className="text-right px-5 py-3 text-base font-bold text-gray-700">ยอดรวม (฿)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.productData.map((p, i) => (
                     <tr key={p.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                      <td className="px-5 py-2 text-base font-semibold text-gray-900">{p.name}</td>
-                      <td className="px-4 py-2 text-right text-base font-semibold text-gray-900">{p.boxes.toLocaleString()}</td>
-                      <td className="px-5 py-2 text-right text-base font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
+                      <td className="px-5 py-2.5 text-lg font-semibold text-gray-900">{p.name}</td>
+                      <td className="px-4 py-2.5 text-right text-lg font-semibold text-gray-900">{p.boxes.toLocaleString()}</td>
+                      <td className="px-5 py-2.5 text-right text-lg font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t-2 border-gray-200">
                   <tr>
-                    <td className="px-5 py-2 text-sm font-bold text-gray-700">รวมทั้งหมด</td>
-                    <td className="px-4 py-2 text-right text-sm font-bold text-gray-900">{report.productData.reduce((s,p)=>s+p.boxes,0).toLocaleString()}</td>
-                    <td className="px-5 py-2 text-right text-sm font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
+                    <td className="px-5 py-3 text-base font-bold text-gray-700">รวมทั้งหมด</td>
+                    <td className="px-4 py-3 text-right text-base font-bold text-gray-900">{report.productData.reduce((s,p)=>s+p.boxes,0).toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right text-base font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -324,19 +312,19 @@ export default function ReportPage() {
           {/* Stock adjustments */}
           {report.adjByReason.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h2 className="font-bold text-gray-900 mb-4">การปรับสต็อคในเดือนนี้</h2>
+              <h2 className="text-lg font-bold text-gray-900 mb-4">การปรับสต็อคในเดือนนี้</h2>
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    <th className="text-left pb-2 text-sm font-bold text-gray-700">เหตุผล</th>
-                    <th className="text-right pb-2 text-sm font-bold text-gray-700">จำนวนสุทธิ (กล่อง)</th>
+                    <th className="text-left pb-2 text-base font-bold text-gray-700">เหตุผล</th>
+                    <th className="text-right pb-2 text-base font-bold text-gray-700">จำนวนสุทธิ (กล่อง)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.adjByReason.map((a, i) => (
                     <tr key={a.reason} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                      <td className="py-1.5 text-base font-medium text-gray-900">{ADJUSTMENT_REASONS[a.reason] ?? a.reason}</td>
-                      <td className={`py-1.5 text-right text-base font-bold ${a.qty >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      <td className="py-2 text-lg font-medium text-gray-900">{ADJUSTMENT_REASONS[a.reason] ?? a.reason}</td>
+                      <td className={`py-2 text-right text-lg font-bold ${a.qty >= 0 ? "text-green-600" : "text-red-600"}`}>
                         {a.qty > 0 ? "+" : ""}{a.qty}
                       </td>
                     </tr>
@@ -354,8 +342,8 @@ export default function ReportPage() {
 function ReportCard({ label, value, green, red }: { label: string; value: string; green?: boolean; red?: boolean }) {
   return (
     <div className={`rounded-xl border p-4 ${green ? "bg-green-50 border-green-200" : red ? "bg-red-50 border-red-200" : "bg-white border-gray-200"}`}>
-      <div className="text-xs font-semibold text-gray-500 mb-1">{label}</div>
-      <div className={`text-xl font-bold ${green ? "text-green-700" : red ? "text-red-700" : "text-gray-900"}`}>{value}</div>
+      <div className="text-sm font-semibold text-gray-500 mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${green ? "text-green-700" : red ? "text-red-700" : "text-gray-900"}`}>{value}</div>
     </div>
   );
 }

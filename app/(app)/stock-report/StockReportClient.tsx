@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTH } from "@/lib/utils";
 import { exportAsA4Png } from "@/lib/exportImage";
+import { fetchProductSortById, fetchProductSortByName, sortByProductId, sortByProductName } from "@/lib/productOrder";
 
 interface ProductRow {
   product_id: string;
@@ -54,8 +55,8 @@ export default function StockReportClient() {
         // TODAY: use product_stock view for authoritative current remaining.
         // Opening = total_remaining - receivedToday + soldToday
         // This definition makes Opening + Received - Sold = Remaining hold exactly.
-        const [{ data: productStock }, { data: todayLots }, { data: todayOrders }] = await Promise.all([
-          supabase.from("product_stock").select("product_id, name, low_stock_threshold, total_remaining").order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
+        const [{ data: productStock }, { data: todayLots }, { data: todayOrders }, sortMap] = await Promise.all([
+          supabase.from("product_stock").select("product_id, name, low_stock_threshold, total_remaining").order("name"),
           supabase.from("lots")
             .select("product_id, boxes_received")
             .eq("date_received", date)
@@ -64,6 +65,7 @@ export default function StockReportClient() {
             .select("order_lines(quantity, lot:lots(product_id))")
             .eq("order_date", date)
             .is("deleted_at", null),
+          fetchProductSortById(supabase),
         ]);
 
         const receivedMap: Record<string, number> = {};
@@ -80,32 +82,32 @@ export default function StockReportClient() {
           }
         }
 
-        setRows(
-          ((productStock ?? []) as { product_id: string; name: string; low_stock_threshold: number | null; total_remaining: number }[])
-            .map(p => {
-              const r = receivedMap[p.product_id] ?? 0;
-              const s = soldMap[p.product_id] ?? 0;
-              return {
-                product_id: p.product_id,
-                name: p.name,
-                total_remaining: p.total_remaining,
-                low_stock_threshold: p.low_stock_threshold,
-                opening: p.total_remaining - r + s,
-                receivedToday: r,
-                soldToday: s,
-              };
-            })
-        );
+        const todayRows = ((productStock ?? []) as { product_id: string; name: string; low_stock_threshold: number | null; total_remaining: number }[])
+          .map(p => {
+            const r = receivedMap[p.product_id] ?? 0;
+            const s = soldMap[p.product_id] ?? 0;
+            return {
+              product_id: p.product_id,
+              name: p.name,
+              total_remaining: p.total_remaining,
+              low_stock_threshold: p.low_stock_threshold,
+              opening: p.total_remaining - r + s,
+              receivedToday: r,
+              soldToday: s,
+            };
+          });
+        setRows(sortByProductId(todayRows, sortMap, r => r.product_id, r => r.name));
       } else {
         // HISTORICAL: manual calculation up to end of selectedDate.
         // Opening = stock at end of day before selectedDate.
         const yesterday = prevDay(date);
 
-        const [{ data: products }, { data: lots }, { data: orders }, { data: adjustments }] = await Promise.all([
-          supabase.from("products").select("id, name, low_stock_threshold").is("deleted_at", null).order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
+        const [{ data: products }, { data: lots }, { data: orders }, { data: adjustments }, sortMapHist] = await Promise.all([
+          supabase.from("products").select("id, name, low_stock_threshold").is("deleted_at", null).order("name"),
           supabase.from("lots").select("id, product_id, boxes_received, date_received").is("deleted_at", null).lte("date_received", date),
           supabase.from("orders").select("order_date, order_lines(lot_id, quantity)").is("deleted_at", null).lte("order_date", date),
           supabase.from("stock_adjustments").select("lot_id, quantity").lt("created_at", nextDayBangkokISO(date)),
+          fetchProductSortById(supabase),
         ]);
 
         // Yesterday's lots and orders for opening calculation
@@ -169,22 +171,21 @@ export default function StockReportClient() {
           prevAdjMap[pid] = (prevAdjMap[pid] ?? 0) + adj.quantity;
         }
 
-        setRows(
-          ((products ?? []) as { id: string; name: string; low_stock_threshold: number | null }[])
-            .map(p => {
-              const remaining = (receivedUpTo[p.id] ?? 0) - (soldUpTo[p.id] ?? 0) + (adjByProduct[p.id] ?? 0);
-              const opening = (prevReceived[p.id] ?? 0) - (prevSold[p.id] ?? 0) + (prevAdjMap[p.id] ?? 0);
-              return {
-                product_id: p.id,
-                name: p.name,
-                total_remaining: remaining,
-                low_stock_threshold: p.low_stock_threshold,
-                opening,
-                receivedToday: receivedOnDate[p.id] ?? 0,
-                soldToday: soldOnDate[p.id] ?? 0,
-              };
-            })
-        );
+        const histRows = ((products ?? []) as { id: string; name: string; low_stock_threshold: number | null }[])
+          .map(p => {
+            const remaining = (receivedUpTo[p.id] ?? 0) - (soldUpTo[p.id] ?? 0) + (adjByProduct[p.id] ?? 0);
+            const opening = (prevReceived[p.id] ?? 0) - (prevSold[p.id] ?? 0) + (prevAdjMap[p.id] ?? 0);
+            return {
+              product_id: p.id,
+              name: p.name,
+              total_remaining: remaining,
+              low_stock_threshold: p.low_stock_threshold,
+              opening,
+              receivedToday: receivedOnDate[p.id] ?? 0,
+              soldToday: soldOnDate[p.id] ?? 0,
+            };
+          });
+        setRows(sortByProductId(histRows, sortMapHist, r => r.product_id, r => r.name));
       }
     } finally {
       setLoading(false);

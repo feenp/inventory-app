@@ -6,6 +6,7 @@ import type { LotRemaining, ProductStock, StockAdjustment } from "@/lib/types";
 import { ADJUSTMENT_REASONS } from "@/lib/types";
 import { exportAsA4Png, todayString } from "@/lib/exportImage";
 import ColumnOrderPicker, { type ColDef } from "@/components/ColumnOrderPicker";
+import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
 interface Product { id: string; name: string; standard_price: number | null }
 
@@ -76,12 +77,14 @@ export default function StockClient({ products }: { products: Product[] }) {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [{ data: ps }, { data: ls }, { data: adj }] = await Promise.all([
-      supabase.from("product_stock").select("*").order("sort_order", { ascending: true, nullsFirst: false }).order("name"),
+    const [{ data: ps }, { data: ls }, { data: adj }, sortMap] = await Promise.all([
+      supabase.from("product_stock").select("*").order("name"),
       supabase.from("lot_remaining").select("*, product:products(name, standard_price)").is("deleted_at", null).order("date_received", { ascending: false }),
       supabase.from("stock_adjustments").select("*, lot:lots(lot_number, product:products(name))").order("created_at", { ascending: false }).limit(30),
+      fetchProductSortById(supabase),
     ]);
-    setProductStock((ps as unknown as ProductStock[]) ?? []);
+    const rawStock = (ps as unknown as ProductStock[]) ?? [];
+    setProductStock(sortByProductId(rawStock, sortMap, p => p.product_id, p => p.name));
     setLots((ls as unknown as LotRemaining[]) ?? []);
     setRecentAdjustments((adj as unknown as StockAdjustment[]) ?? []);
     setLoading(false);

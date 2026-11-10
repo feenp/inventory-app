@@ -3,13 +3,13 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatBaht } from "@/lib/utils";
 import ColumnOrderPicker, { type ColDef } from "@/components/ColumnOrderPicker";
+import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
 interface Product {
   id: string;
   name: string;
   standard_price: number | null;
   low_stock_threshold: number | null;
-  sort_order: number | null;
 }
 interface PaymentChannel { id: string; name: string }
 
@@ -75,15 +75,16 @@ export default function PricesPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [{ data: prods }, { data: chans }] = await Promise.all([
+    const [{ data: prods }, { data: chans }, sortMap] = await Promise.all([
       supabase.from("products")
-        .select("id, name, standard_price, low_stock_threshold, sort_order")
+        .select("id, name, standard_price, low_stock_threshold")
         .is("deleted_at", null)
-        .order("sort_order", { ascending: true, nullsFirst: false })
         .order("name"),
       supabase.from("payment_channels").select("id, name").is("deleted_at", null).order("name"),
+      fetchProductSortById(supabase),
     ]);
-    setProducts((prods ?? []) as Product[]);
+    const rawProds = (prods ?? []) as Product[];
+    setProducts(sortByProductId(rawProds, sortMap, p => p.id, p => p.name));
     setChannels((chans ?? []) as PaymentChannel[]);
     setLoading(false);
   }, [supabase]);
@@ -124,9 +125,8 @@ export default function PricesPage() {
     setAddingProduct(true);
     const { data: { user } } = await supabase.auth.getUser();
     const price = newProductPrice ? parseFloat(newProductPrice) : null;
-    const maxOrder = products.reduce((m, p) => Math.max(m, p.sort_order ?? 0), 0);
     const { data, error } = await supabase.from("products").insert({
-      name: newProductName.trim(), standard_price: price, sort_order: maxOrder + 10,
+      name: newProductName.trim(), standard_price: price,
     }).select("id").single();
     if (error) { setAddProductError(error.message); setAddingProduct(false); return; }
     await supabase.from("change_history").insert({
