@@ -4,38 +4,43 @@ import { toPng } from "html-to-image";
 const A4_WIDTH_PX = 2480;
 
 export async function exportAsA4Png(element: HTMLElement, filename: string, compact = false) {
-  let target: HTMLElement;
-  let clone: HTMLElement | null = null;
+  // For compact mode: temporarily apply tight styles to the live element,
+  // capture, then restore. The element must stay in the real DOM for
+  // html-to-image to render it correctly.
+  const saved: { el: HTMLElement; style: string }[] = [];
+
+  const save = (el: HTMLElement) => saved.push({ el, style: el.style.cssText });
 
   if (compact) {
-    // Build a compact clone: fit-content width, tight cell padding, no stretched tables
-    clone = element.cloneNode(true) as HTMLElement;
-    clone.style.cssText =
-      "position:absolute;top:-99999px;left:0;width:max-content;background:#fff;";
+    // Container: shrink to content width
+    save(element);
+    element.style.width = "max-content";
+    element.style.minWidth = "0";
 
-    for (const cell of clone.querySelectorAll("th, td")) {
+    // Tables: auto width (overrides w-full / 100%)
+    for (const table of element.querySelectorAll("table")) {
+      const el = table as HTMLElement;
+      save(el);
+      el.style.width = "auto";
+      el.style.minWidth = "0";
+    }
+
+    // Cells: tight padding, prevent wrapping
+    for (const cell of element.querySelectorAll("th, td")) {
       const el = cell as HTMLElement;
+      save(el);
       el.style.padding = "5px 14px";
       el.style.whiteSpace = "nowrap";
     }
-    for (const table of clone.querySelectorAll("table")) {
-      const el = table as HTMLElement;
-      el.classList.remove("w-full");
-      el.style.width = "auto";
-    }
 
-    document.body.appendChild(clone);
-    // Let browser compute natural layout
-    await new Promise<void>(r => setTimeout(r, 80));
-    target = clone;
-  } else {
-    target = element;
+    // Force layout recalculation before capture
+    element.getBoundingClientRect();
   }
 
   try {
     const ratio = compact ? 3 : A4_WIDTH_PX / element.offsetWidth;
 
-    const dataUrl = await toPng(target, {
+    const dataUrl = await toPng(element, {
       pixelRatio: ratio,
       backgroundColor: "#ffffff",
       style: { background: "#ffffff" },
@@ -50,7 +55,10 @@ export async function exportAsA4Png(element: HTMLElement, filename: string, comp
     link.href = dataUrl;
     link.click();
   } finally {
-    if (clone) document.body.removeChild(clone);
+    // Always restore original styles
+    for (const { el, style } of saved) {
+      el.style.cssText = style;
+    }
   }
 }
 
