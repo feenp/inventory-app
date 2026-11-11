@@ -132,7 +132,7 @@ export default function ReportPage() {
   async function handleExportSalesByProduct() {
     if (!salesByProductRef.current || !report) return;
     const monthStr = String(report.month + 1).padStart(2, "0");
-    await exportAsA4Png(salesByProductRef.current, `ยอดขายตามสินค้า_${report.year}-${monthStr}.png`);
+    await exportAsA4Png(salesByProductRef.current, `ยอดขายตามสินค้า_${report.year}-${monthStr}.png`, true);
   }
 
   const beYear = toBEYear(new Date(selectedYear, 0, 1));

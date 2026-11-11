@@ -196,7 +196,7 @@ export default function StockReportClient() {
 
   async function handleExport() {
     if (!contentRef.current) return;
-    await exportAsA4Png(contentRef.current, `รายงานสต็อค_${selectedDate}.png`);
+    await exportAsA4Png(contentRef.current, `รายงานสต็อค_${selectedDate}.png`, true);
   }
 
   const totalRemaining = rows.reduce((s, p) => s + p.total_remaining, 0);
