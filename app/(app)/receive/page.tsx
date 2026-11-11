@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { validateLotNumber } from "@/lib/utils";
+import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
 interface Product { id: string; name: string; standard_price: number | null }
 interface LotItem { lot_number: string }
@@ -22,11 +23,12 @@ export default function ReceivePage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [{ data: prods }, { data: ls }] = await Promise.all([
+    const [{ data: prods }, { data: ls }, sortMap] = await Promise.all([
       supabase.from("products").select("id, name, standard_price").is("deleted_at", null).order("name"),
       supabase.from("lots").select("lot_number").is("deleted_at", null),
+      fetchProductSortById(supabase),
     ]);
-    setProducts((prods ?? []) as Product[]);
+    setProducts(sortByProductId((prods ?? []) as Product[], sortMap, p => p.id, p => p.name));
     setLots((ls ?? []) as LotItem[]);
     setLoading(false);
   }, [supabase]);

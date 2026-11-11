@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { formatBaht, formatDateTH } from "@/lib/utils";
 import Link from "next/link";
+import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -32,8 +33,11 @@ export default async function DashboardPage() {
     .eq("is_paid", false)
     .is("deleted_at", null);
 
-  // Low stock products
-  const { data: stockData } = await supabase.from("product_stock").select("*");
+  // Low stock products + sort order
+  const [{ data: stockData }, productSortMap] = await Promise.all([
+    supabase.from("product_stock").select("*"),
+    fetchProductSortById(supabase),
+  ]);
 
   // Last 7 days sales (one entry per day)
   const last7Days: { date: string; total: number }[] = [];
@@ -70,10 +74,11 @@ export default async function DashboardPage() {
   }
   const unpaidList = Object.values(unpaidByCustomer).sort((a, b) => b.total - a.total).slice(0, 10);
 
-  // Low stock alerts
-  const lowStock = (stockData ?? []).filter(p =>
+  // Low stock alerts — sorted by global product order
+  const lowStockUnsorted = (stockData ?? []).filter(p =>
     p.low_stock_threshold !== null && p.total_remaining <= p.low_stock_threshold
   );
+  const lowStock = sortByProductId(lowStockUnsorted, productSortMap, p => p.product_id, p => p.name);
 
   const maxBar = Math.max(...last7Days.map(d => d.total), 1);
 
