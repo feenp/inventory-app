@@ -56,6 +56,11 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
   const today = new Date().toISOString().slice(0, 10);
   const [orderDate, setOrderDate] = useState(editOrder?.order_date ?? today);
   const [customerId, setCustomerId] = useState(editOrder?.customer_id ?? "");
+  const [customerSearch, setCustomerSearch] = useState(
+    editOrder ? (customers.find(c => c.id === editOrder.customer_id)?.name ?? "") : ""
+  );
+  const [customerDropOpen, setCustomerDropOpen] = useState(false);
+  const [customerDropIndex, setCustomerDropIndex] = useState(-1);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [isPaid, setIsPaid] = useState(editOrder?.is_paid ?? false);
@@ -205,6 +210,9 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
     const freshToday = new Date().toISOString().slice(0, 10);
     setOrderDate(freshToday);
     setCustomerId("");
+    setCustomerSearch("");
+    setCustomerDropOpen(false);
+    setCustomerDropIndex(-1);
     setNewCustomerName("");
     setShowNewCustomer(false);
     setIsPaid(false);
@@ -328,12 +336,98 @@ export default function NewOrderForm({ customers, paymentChannels, editOrder }: 
             <label className="block text-sm font-medium text-gray-700 mb-1">ลูกค้า</label>
             {!showNewCustomer ? (
               <div className="flex gap-2">
-                <select value={customerId} onChange={e => setCustomerId(e.target.value)}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="">-- เลือกลูกค้า --</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <button onClick={() => { setShowNewCustomer(true); setCustomerId(""); }}
+                <div className="relative flex-1">
+                  <input
+                    value={customerSearch}
+                    onChange={e => {
+                      setCustomerSearch(e.target.value);
+                      setCustomerId("");
+                      setCustomerDropOpen(true);
+                      setCustomerDropIndex(-1);
+                    }}
+                    onFocus={() => setCustomerDropOpen(true)}
+                    onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
+                    onKeyDown={e => {
+                      const matches = customers.filter(c =>
+                        c.name.toLowerCase().includes(customerSearch.toLowerCase())
+                      );
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setCustomerDropIndex(i => Math.min(i + 1, matches.length - 1));
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setCustomerDropIndex(i => Math.max(i - 1, 0));
+                      } else if (e.key === "Enter" && customerDropIndex >= 0) {
+                        e.preventDefault();
+                        const c = matches[customerDropIndex];
+                        setCustomerId(c.id);
+                        setCustomerSearch(c.name);
+                        setCustomerDropOpen(false);
+                        setCustomerDropIndex(-1);
+                      } else if (e.key === "Escape") {
+                        setCustomerDropOpen(false);
+                      }
+                    }}
+                    placeholder="พิมพ์เพื่อค้นหาลูกค้า..."
+                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${customerId ? "border-blue-400 bg-blue-50" : "border-gray-300"}`}
+                  />
+                  {customerId && (
+                    <button
+                      type="button"
+                      onClick={() => { setCustomerId(""); setCustomerSearch(""); setCustomerDropOpen(true); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
+                    >×</button>
+                  )}
+                  {customerDropOpen && customerSearch && (() => {
+                    const matches = customers.filter(c =>
+                      c.name.toLowerCase().includes(customerSearch.toLowerCase())
+                    );
+                    if (matches.length === 0) return (
+                      <div className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">
+                        ไม่พบลูกค้า
+                      </div>
+                    );
+                    return (
+                      <div className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {matches.map((c, i) => (
+                          <div
+                            key={c.id}
+                            onMouseDown={() => {
+                              setCustomerId(c.id);
+                              setCustomerSearch(c.name);
+                              setCustomerDropOpen(false);
+                              setCustomerDropIndex(-1);
+                            }}
+                            className={`px-3 py-2 text-sm cursor-pointer ${i === customerDropIndex ? "bg-blue-50 text-blue-700 font-medium" : "hover:bg-gray-50 text-gray-800"}`}
+                          >
+                            {c.name}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {customerDropOpen && !customerSearch && (() => {
+                    return (
+                      <div className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {customers.map((c, i) => (
+                          <div
+                            key={c.id}
+                            onMouseDown={() => {
+                              setCustomerId(c.id);
+                              setCustomerSearch(c.name);
+                              setCustomerDropOpen(false);
+                              setCustomerDropIndex(-1);
+                            }}
+                            className={`px-3 py-2 text-sm cursor-pointer ${i === customerDropIndex ? "bg-blue-50 text-blue-700 font-medium" : "hover:bg-gray-50 text-gray-800"}`}
+                          >
+                            {c.name}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <button onClick={() => { setShowNewCustomer(true); setCustomerId(""); setCustomerSearch(""); }}
                   className="text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap">+ ใหม่</button>
               </div>
             ) : (
