@@ -18,11 +18,9 @@ export interface TableExportSection {
   footer?: Record<string, string>;
 }
 
-const CELL = (align: string, bold = false, header = false) =>
+const CELL = (align: string) =>
   `border:1px solid #000;padding:5px 12px;font-size:13px;text-align:${align};` +
-  `white-space:nowrap;color:#000;background:#fff;` +
-  (bold ? "font-weight:bold;" : "") +
-  (header ? "font-weight:bold;" : "");
+  `white-space:nowrap;color:#000;background:#fff;font-weight:bold;`;
 
 function buildTableEl(columns: TableExportCol[], rows: Record<string, string>[], footer?: Record<string, string>): HTMLTableElement {
   const table = document.createElement("table");
@@ -32,7 +30,7 @@ function buildTableEl(columns: TableExportCol[], rows: Record<string, string>[],
   const hrow = document.createElement("tr");
   for (const col of columns) {
     const th = document.createElement("th");
-    th.style.cssText = CELL(col.align ?? "center", false, true);
+    th.style.cssText = CELL(col.align ?? "center");
     th.textContent = col.label;
     hrow.appendChild(th);
   }
@@ -57,7 +55,7 @@ function buildTableEl(columns: TableExportCol[], rows: Record<string, string>[],
     const frow = document.createElement("tr");
     for (const col of columns) {
       const td = document.createElement("td");
-      td.style.cssText = CELL(col.align ?? "left", true);
+      td.style.cssText = CELL(col.align ?? "left");
       td.textContent = footer[col.key] ?? "";
       frow.appendChild(td);
     }
