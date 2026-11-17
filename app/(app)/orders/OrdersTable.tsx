@@ -294,9 +294,9 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
               )}
             </div>
             <button
-              onClick={handleExportSummary}
+              onClick={handleExportOrders}
               className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors">
-              ดาวน์โหลดสรุป
+              ดาวน์โหลดรูปภาพ
             </button>
           </div>
           <table className="w-full">
