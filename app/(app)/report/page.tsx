@@ -286,7 +286,7 @@ export default function ReportPage() {
                   <tr>
                     <th className="text-left px-5 py-3 text-base font-bold text-gray-700">สินค้า</th>
                     <th className="text-right px-4 py-3 text-base font-bold text-gray-700">กล่อง</th>
-                    <th className="text-right px-5 py-3 text-base font-bold text-gray-700">ยอดรวม (฿)</th>
+                    <th data-export-hidden="true" className="text-right px-5 py-3 text-base font-bold text-gray-700">ยอดรวม (฿)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -294,7 +294,7 @@ export default function ReportPage() {
                     <tr key={p.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                       <td className="px-5 py-2.5 text-lg font-semibold text-gray-900">{p.name}</td>
                       <td className="px-4 py-2.5 text-right text-lg font-semibold text-gray-900">{p.boxes.toLocaleString()}</td>
-                      <td className="px-5 py-2.5 text-right text-lg font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
+                      <td data-export-hidden="true" className="px-5 py-2.5 text-right text-lg font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -302,7 +302,7 @@ export default function ReportPage() {
                   <tr>
                     <td className="px-5 py-3 text-base font-bold text-gray-700">รวมทั้งหมด</td>
                     <td className="px-4 py-3 text-right text-base font-bold text-gray-900">{report.productData.reduce((s,p)=>s+p.boxes,0).toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right text-base font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
+                    <td data-export-hidden="true" className="px-5 py-3 text-right text-base font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
                   </tr>
                 </tfoot>
               </table>
