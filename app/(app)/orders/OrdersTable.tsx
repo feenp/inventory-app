@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatBaht, formatDateTH } from "@/lib/utils";
-import { exportAsA4Png, todayString } from "@/lib/exportImage";
+import { exportAsTableImage, type TableExportCol, todayString } from "@/lib/exportImage";
 import Link from "next/link";
 
 interface Customer { id: string; name: string }
@@ -27,7 +27,6 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   initialSearch?: string;
 }) {
   const supabase = createClient();
-  const tableRef = useRef<HTMLDivElement>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -74,6 +73,44 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     return true;
   });
 
+  async function handleExportOrders() {
+    const cols: TableExportCol[] = [
+      { key: "order_number", label: "เลขออเดอร์",   align: "left" },
+      { key: "date",         label: "วันที่",         align: "left" },
+      { key: "customer",     label: "ลูกค้า",         align: "left" },
+      { key: "products",     label: "สินค้า",         align: "left" },
+      { key: "total",        label: "ยอดรวม",         align: "right" },
+      { key: "status",       label: "สถานะ",          align: "center" },
+    ];
+    const exportRows = filtered.map(o => {
+      const total = o.order_lines.reduce((s, l) => s + l.quantity * l.unit_price, 0);
+      const productQtyMap: Record<string, number> = {};
+      for (const l of o.order_lines) {
+        const name = l.lot?.product?.name ?? "ไม่ระบุ";
+        productQtyMap[name] = (productQtyMap[name] ?? 0) + l.quantity;
+      }
+      const productSummary = Object.entries(productQtyMap).map(([name, qty]) => `${name} (${qty})`).join(", ");
+      return {
+        order_number: o.order_number,
+        date:         formatDateTH(o.order_date),
+        customer:     o.customer?.name ?? "",
+        products:     productSummary || "-",
+        total:        `฿${formatBaht(total)}`,
+        status:       o.is_paid ? "ชำระแล้ว" : "ค้างชำระ",
+      };
+    });
+    const d = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    const beYear = d.getFullYear() + 543;
+    const dateLabel = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${beYear}`;
+    await exportAsTableImage({
+      title:    "รายการออเดอร์",
+      subtitle: `ส่งออกเมื่อ ${dateLabel} (${filtered.length} รายการ)`,
+      columns:  cols,
+      rows:     exportRows,
+      filename: `ออเดอร์_${todayString()}.png`,
+    });
+  }
+
   return (
     <div>
       {/* Filters */}
@@ -101,16 +138,16 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
       </div>
 
       {/* Export button */}
-      <div className="flex justify-end mb-3" data-export-hidden="true">
+      <div className="flex justify-end mb-3">
         <button
-          onClick={() => tableRef.current && exportAsA4Png(tableRef.current, `ออเดอร์_${todayString()}.png`)}
+          onClick={handleExportOrders}
           className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
           ดาวน์โหลดรูปภาพ
         </button>
       </div>
 
       {/* Table */}
-      <div ref={tableRef} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-gray-400">กำลังโหลด...</div>
         ) : filtered.length === 0 ? (

@@ -1,10 +1,10 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTH } from "@/lib/utils";
 import type { LotRemaining, ProductStock, StockAdjustment } from "@/lib/types";
 import { ADJUSTMENT_REASONS } from "@/lib/types";
-import { exportAsA4Png, todayString } from "@/lib/exportImage";
+import { exportAsTableImage, type TableExportCol, todayString } from "@/lib/exportImage";
 import ColumnOrderPicker, { type ColDef } from "@/components/ColumnOrderPicker";
 import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
@@ -25,7 +25,6 @@ const LOTS_LS_KEY = "inv_lots_cols";
 
 export default function StockClient({ products }: { products: Product[] }) {
   const supabase = createClient();
-  const summaryRef = useRef<HTMLDivElement>(null);
   const [productStock, setProductStock] = useState<ProductStock[]>([]);
   const [lots, setLots] = useState<LotRemaining[]>([]);
   const [recentAdjustments, setRecentAdjustments] = useState<StockAdjustment[]>([]);
@@ -151,6 +150,35 @@ export default function StockClient({ products }: { products: Product[] }) {
     return true;
   });
 
+  async function handleExportSummary() {
+    const cols: TableExportCol[] = [
+      { key: "name",      label: "ชื่อสินค้า",     align: "left" },
+      { key: "remaining", label: "คงเหลือ (กล่อง)", align: "right" },
+      { key: "status",    label: "สถานะ",           align: "center" },
+    ];
+    const exportRows = productStock.map(p => {
+      const isEmpty = p.total_remaining <= 0;
+      const isLow = !isEmpty && p.low_stock_threshold != null && p.total_remaining <= p.low_stock_threshold;
+      return {
+        name:      p.name,
+        remaining: p.total_remaining.toLocaleString(),
+        status:    isEmpty ? "หมดแล้ว" : isLow ? "ใกล้หมด" : "",
+      };
+    });
+    const totalRemaining = productStock.reduce((s, p) => s + p.total_remaining, 0);
+    const d = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    const beYear = d.getFullYear() + 543;
+    const dateLabel = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${beYear}`;
+    await exportAsTableImage({
+      title:    "ภาพรวมสต็อค",
+      subtitle: `วันที่ ${dateLabel}`,
+      columns:  cols,
+      rows:     exportRows,
+      footer:   { name: "รวมทั้งหมด", remaining: totalRemaining.toLocaleString(), status: "" },
+      filename: `ภาพรวมสต็อค_${todayString()}.png`,
+    });
+  }
+
   if (loading) return <div className="p-8 text-center text-gray-400 font-medium">กำลังโหลด...</div>;
 
   return (
@@ -170,14 +198,14 @@ export default function StockClient({ products }: { products: Product[] }) {
       {/* Summary */}
       {tab === "summary" && (
         <div>
-          <div className="flex justify-end mb-3" data-export-hidden="true">
+          <div className="flex justify-end mb-3">
             <button
-              onClick={() => summaryRef.current && exportAsA4Png(summaryRef.current, `ภาพรวมสต็อค_${todayString()}.png`)}
+              onClick={handleExportSummary}
               className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors">
               ดาวน์โหลดรูปภาพ
             </button>
           </div>
-          <div ref={summaryRef} className="bg-white p-4 rounded-xl">
+          <div className="bg-white p-4 rounded-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-100 font-bold text-gray-900">สต็อคตามสินค้า</div>
