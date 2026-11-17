@@ -28,11 +28,19 @@ export async function exportAsTableImage(opts: {
 }) {
   const { title, subtitle, columns, rows, footer, summaryLines, filename } = opts;
 
-  // Build a fully inline-styled element — no Tailwind classes
+  // Outer shell keeps the element off-screen in the real DOM so the browser paints it.
+  // We capture the inner `wrap` — which has no fixed positioning — so html-to-image
+  // doesn't place the content outside the canvas bounds.
+  const shell = document.createElement("div");
+  shell.style.cssText = "position:fixed;top:0;left:110vw;pointer-events:none;";
+
+  // wrap is what we actually capture
   const wrap = document.createElement("div");
   wrap.style.cssText =
-    "position:fixed;top:0;left:110vw;background:#fff;padding:16px 20px;" +
-    "font-family:Sarabun,\"Noto Sans Thai\",Arial,sans-serif;width:max-content;";
+    "display:inline-block;background:#fff;padding:16px 20px;" +
+    "font-family:Arial,sans-serif;width:max-content;";
+
+  shell.appendChild(wrap);
 
   const addText = (text: string, css: string) => {
     const el = document.createElement("div");
@@ -94,8 +102,9 @@ export async function exportAsTableImage(opts: {
     addText(line, "font-size:13px;font-weight:bold;color:#000;margin-top:8px;text-align:right;");
   }
 
-  document.body.appendChild(wrap);
-  await new Promise<void>(r => setTimeout(r, 80));
+  document.body.appendChild(shell);
+  // Give the browser a frame to lay out and paint the element
+  await new Promise<void>(r => setTimeout(r, 200));
 
   try {
     const dataUrl = await toPng(wrap, {
@@ -107,7 +116,7 @@ export async function exportAsTableImage(opts: {
     link.href = dataUrl;
     link.click();
   } finally {
-    document.body.removeChild(wrap);
+    document.body.removeChild(shell);
   }
 }
 
