@@ -128,39 +128,63 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   }
 
   async function handleExportOrders() {
-    const cols: TableExportCol[] = [
-      { key: "order_number", label: "เลขออเดอร์",   align: "left" },
-      { key: "date",         label: "วันที่",         align: "left" },
-      { key: "customer",     label: "ลูกค้า",         align: "left" },
-      { key: "products",     label: "สินค้า",         align: "left" },
-      { key: "total",        label: "ยอดรวม",         align: "right" },
-      { key: "status",       label: "สถานะ",          align: "center" },
+    const orderCols: TableExportCol[] = [
+      { key: "order_number", label: "เลขออเดอร์", align: "left" },
+      { key: "date",         label: "วันที่",       align: "left" },
+      { key: "customer",     label: "ลูกค้า",       align: "left" },
+      { key: "products",     label: "สินค้า",       align: "left" },
+      { key: "total",        label: "ยอดรวม",       align: "right" },
+      { key: "status",       label: "สถานะ",        align: "center" },
     ];
-    const exportRows = filtered.map(o => {
+    const orderRows = filtered.map(o => {
       const total = o.order_lines.reduce((s, l) => s + l.quantity * l.unit_price, 0);
       const productQtyMap: Record<string, number> = {};
       for (const l of o.order_lines) {
         const name = l.lot?.product?.name ?? "ไม่ระบุ";
         productQtyMap[name] = (productQtyMap[name] ?? 0) + l.quantity;
       }
-      const productSummary = Object.entries(productQtyMap).map(([name, qty]) => `${name} (${qty})`).join(", ");
       return {
         order_number: o.order_number,
         date:         formatDateTH(o.order_date),
         customer:     o.customer?.name ?? "",
-        products:     productSummary || "-",
+        products:     Object.entries(productQtyMap).map(([n, q]) => `${n} (${q})`).join(", ") || "-",
         total:        `฿${formatBaht(total)}`,
         status:       o.is_paid ? "ชำระแล้ว" : "ค้างชำระ",
       };
     });
-    const d = new Date(Date.now() + 7 * 60 * 60 * 1000);
-    const beYear = d.getFullYear() + 543;
-    const dateLabel = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${beYear}`;
+    const orderTotal = filtered.reduce((s, o) => s + o.order_lines.reduce((ss, l) => ss + l.quantity * l.unit_price, 0), 0);
+
+    const summaryCols: TableExportCol[] = [
+      { key: "name",  label: "สินค้า",        align: "left" },
+      { key: "boxes", label: "จำนวน (กล่อง)", align: "right" },
+      { key: "baht",  label: "รายได้ (฿)",   align: "right" },
+    ];
+    const summaryRows = productSummaryData.map(p => ({
+      name:  p.name,
+      boxes: p.boxes.toLocaleString(),
+      baht:  `฿${formatBaht(p.baht)}`,
+    }));
+    const totalBoxes = productSummaryData.reduce((s, p) => s + p.boxes, 0);
+    const totalBaht  = productSummaryData.reduce((s, p) => s + p.baht, 0);
+
+    const dateRange = buildDateRangeLabel();
     await exportAsTableImage({
       title:    "รายการออเดอร์",
-      subtitle: `ส่งออกเมื่อ ${dateLabel} (${filtered.length} รายการ)`,
-      columns:  cols,
-      rows:     exportRows,
+      subtitle: (dateRange || todayString()) + ` · ${filtered.length} ออเดอร์`,
+      sections: [
+        {
+          columns: orderCols,
+          rows:    orderRows,
+          footer:  { order_number: "รวม", date: "", customer: "", products: "", total: `฿${formatBaht(orderTotal)}`, status: "" },
+        },
+        ...(productSummaryData.length > 0 ? [{
+          label:   "สรุปยอดตามสินค้า",
+          columns: summaryCols,
+          rows:    summaryRows,
+          footer:  { name: "รวมทั้งหมด", boxes: totalBoxes.toLocaleString(), baht: `฿${formatBaht(totalBaht)}` },
+        }] : []),
+      ],
+      summaryLines: totalBoxes > 0 ? [`ขายได้ ${totalBoxes.toLocaleString()} กล่อง · รายได้รวม ฿${formatBaht(totalBaht)}`] : [],
       filename: `ออเดอร์_${todayString()}.png`,
     });
   }

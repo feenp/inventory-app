@@ -11,30 +11,90 @@ export interface TableExportCol {
   align?: "left" | "right" | "center";
 }
 
+export interface TableExportSection {
+  label?: string;
+  columns: TableExportCol[];
+  rows: Record<string, string>[];
+  footer?: Record<string, string>;
+}
+
 const CELL = (align: string, bold = false, header = false) =>
   `border:1px solid #000;padding:5px 12px;font-size:13px;text-align:${align};` +
   `white-space:nowrap;color:#000;background:#fff;` +
   (bold ? "font-weight:bold;" : "") +
   (header ? "font-weight:bold;" : "");
 
+function buildTableEl(columns: TableExportCol[], rows: Record<string, string>[], footer?: Record<string, string>): HTMLTableElement {
+  const table = document.createElement("table");
+  table.style.cssText = "border-collapse:collapse;width:auto;background:#fff;";
+
+  const thead = document.createElement("thead");
+  const hrow = document.createElement("tr");
+  for (const col of columns) {
+    const th = document.createElement("th");
+    th.style.cssText = CELL(col.align ?? "center", false, true);
+    th.textContent = col.label;
+    hrow.appendChild(th);
+  }
+  thead.appendChild(hrow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const col of columns) {
+      const td = document.createElement("td");
+      td.style.cssText = CELL(col.align ?? "left");
+      td.textContent = row[col.key] ?? "";
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+
+  if (footer) {
+    const tfoot = document.createElement("tfoot");
+    const frow = document.createElement("tr");
+    for (const col of columns) {
+      const td = document.createElement("td");
+      td.style.cssText = CELL(col.align ?? "left", true);
+      td.textContent = footer[col.key] ?? "";
+      frow.appendChild(td);
+    }
+    tfoot.appendChild(frow);
+    table.appendChild(tfoot);
+  }
+
+  return table;
+}
+
 export async function exportAsTableImage(opts: {
   title: string;
   subtitle?: string;
-  columns: TableExportCol[];
-  rows: Record<string, string>[];
+  // Single-section shorthand (backward compat)
+  columns?: TableExportCol[];
+  rows?: Record<string, string>[];
   footer?: Record<string, string>;
+  // Multi-section
+  sections?: TableExportSection[];
   summaryLines?: string[];
   filename: string;
 }) {
-  const { title, subtitle, columns, rows, footer, summaryLines, filename } = opts;
+  const { title, subtitle, summaryLines, filename } = opts;
+
+  // Normalise to sections array
+  const sections: TableExportSection[] = opts.sections ?? (opts.columns ? [{
+    columns: opts.columns,
+    rows: opts.rows ?? [],
+    footer: opts.footer,
+  }] : []);
 
   // Outer shell keeps the element off-screen in the real DOM so the browser paints it.
-  // We capture the inner `wrap` — which has no fixed positioning — so html-to-image
-  // doesn't place the content outside the canvas bounds.
+  // We capture the inner `wrap` which has no fixed positioning, preventing html-to-image
+  // from placing content outside the canvas bounds.
   const shell = document.createElement("div");
   shell.style.cssText = "position:fixed;top:0;left:110vw;pointer-events:none;";
 
-  // wrap is what we actually capture
   const wrap = document.createElement("div");
   wrap.style.cssText =
     "display:inline-block;background:#fff;padding:16px 20px;" +
@@ -52,58 +112,27 @@ export async function exportAsTableImage(opts: {
   addText(title, "font-size:15px;font-weight:bold;margin-bottom:3px;color:#000;");
   if (subtitle) addText(subtitle, "font-size:13px;color:#333;margin-bottom:10px;");
 
-  const table = document.createElement("table");
-  table.style.cssText = "border-collapse:collapse;width:auto;background:#fff;";
-
-  // Header row
-  const thead = document.createElement("thead");
-  const hrow = document.createElement("tr");
-  for (const col of columns) {
-    const th = document.createElement("th");
-    th.style.cssText = CELL(col.align ?? "center", false, true);
-    th.textContent = col.label;
-    hrow.appendChild(th);
-  }
-  thead.appendChild(hrow);
-  table.appendChild(thead);
-
-  // Body rows
-  const tbody = document.createElement("tbody");
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-    for (const col of columns) {
-      const td = document.createElement("td");
-      td.style.cssText = CELL(col.align ?? "left");
-      td.textContent = row[col.key] ?? "";
-      tr.appendChild(td);
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    if (i > 0) {
+      // Divider between sections
+      const sep = document.createElement("div");
+      sep.style.cssText =
+        "border-top:1px solid #ccc;margin-top:16px;padding-top:12px;" +
+        (section.label
+          ? "font-size:13px;font-weight:bold;color:#000;margin-bottom:6px;"
+          : "");
+      if (section.label) sep.textContent = section.label;
+      wrap.appendChild(sep);
     }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-
-  // Footer row
-  if (footer) {
-    const tfoot = document.createElement("tfoot");
-    const frow = document.createElement("tr");
-    for (const col of columns) {
-      const td = document.createElement("td");
-      td.style.cssText = CELL(col.align ?? "left", true);
-      td.textContent = footer[col.key] ?? "";
-      frow.appendChild(td);
-    }
-    tfoot.appendChild(frow);
-    table.appendChild(tfoot);
+    wrap.appendChild(buildTableEl(section.columns, section.rows, section.footer));
   }
 
-  wrap.appendChild(table);
-
-  // Summary lines below table
   for (const line of summaryLines ?? []) {
     addText(line, "font-size:13px;font-weight:bold;color:#000;margin-top:8px;text-align:right;");
   }
 
   document.body.appendChild(shell);
-  // Give the browser a frame to lay out and paint the element
   await new Promise<void>(r => setTimeout(r, 200));
 
   try {
