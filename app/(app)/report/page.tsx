@@ -1,9 +1,9 @@
 "use client";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatBaht, toBEYear } from "@/lib/utils";
 import { ADJUSTMENT_REASONS } from "@/lib/types";
-import { exportAsA4Png } from "@/lib/exportImage";
+import { exportAsTableImage, type TableExportCol } from "@/lib/exportImage";
 import { fetchProductSortByName, sortByProductName } from "@/lib/productOrder";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -28,7 +28,6 @@ interface ReportData {
 export default function ReportPage() {
   const supabase = createClient();
   const now = new Date();
-  const salesByProductRef = useRef<HTMLDivElement>(null);
 
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -130,9 +129,25 @@ export default function ReportPage() {
   }, [supabase, selectedYear, selectedMonth]);
 
   async function handleExportSalesByProduct() {
-    if (!salesByProductRef.current || !report) return;
+    if (!report) return;
     const monthStr = String(report.month + 1).padStart(2, "0");
-    await exportAsA4Png(salesByProductRef.current, `ยอดขายตามสินค้า_${report.year}-${monthStr}.png`, true);
+    const cols: TableExportCol[] = [
+      { key: "name",  label: "สินค้า", align: "left" },
+      { key: "boxes", label: "กล่อง",  align: "right" },
+    ];
+    const exportRows = report.productData.map(p => ({
+      name:  p.name,
+      boxes: p.boxes.toLocaleString(),
+    }));
+    const totalBoxes = report.productData.reduce((s, p) => s + p.boxes, 0);
+    await exportAsTableImage({
+      title:    "ยอดขายตามสินค้า",
+      subtitle: `${THAI_MONTHS[report.month]} พ.ศ. ${toBEYear(new Date(report.year, 0, 1))}`,
+      columns:  cols,
+      rows:     exportRows,
+      footer:   { name: "รวมทั้งหมด", boxes: totalBoxes.toLocaleString() },
+      filename: `ยอดขายตามสินค้า_${report.year}-${monthStr}.png`,
+    });
   }
 
   const beYear = toBEYear(new Date(selectedYear, 0, 1));
@@ -265,14 +280,13 @@ export default function ReportPage() {
               <h2 className="text-lg font-bold text-gray-900">ยอดขายตามสินค้า</h2>
               <button
                 onClick={handleExportSalesByProduct}
-                data-export-hidden="true"
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors"
               >
                 ดาวน์โหลดรูปภาพ
               </button>
             </div>
 
-            <div ref={salesByProductRef} className="bg-white">
+            <div className="bg-white">
               {/* Export header (shown in image, hidden on screen via print only but always rendered) */}
               <div className="px-5 pt-4 pb-2">
                 <div className="text-base font-bold text-gray-900">ยอดขายตามสินค้า</div>
@@ -286,7 +300,7 @@ export default function ReportPage() {
                   <tr>
                     <th className="text-left px-5 py-3 text-base font-bold text-gray-700">สินค้า</th>
                     <th className="text-right px-4 py-3 text-base font-bold text-gray-700">กล่อง</th>
-                    <th data-export-hidden="true" className="text-right px-5 py-3 text-base font-bold text-gray-700">ยอดรวม (฿)</th>
+                    <th className="text-right px-5 py-3 text-base font-bold text-gray-700">ยอดรวม (฿)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -294,7 +308,7 @@ export default function ReportPage() {
                     <tr key={p.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                       <td className="px-5 py-2.5 text-lg font-semibold text-gray-900">{p.name}</td>
                       <td className="px-4 py-2.5 text-right text-lg font-semibold text-gray-900">{p.boxes.toLocaleString()}</td>
-                      <td data-export-hidden="true" className="px-5 py-2.5 text-right text-lg font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
+                      <td className="px-5 py-2.5 text-right text-lg font-bold text-gray-900">฿{formatBaht(p.baht)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -302,7 +316,7 @@ export default function ReportPage() {
                   <tr>
                     <td className="px-5 py-3 text-base font-bold text-gray-700">รวมทั้งหมด</td>
                     <td className="px-4 py-3 text-right text-base font-bold text-gray-900">{report.productData.reduce((s,p)=>s+p.boxes,0).toLocaleString()}</td>
-                    <td data-export-hidden="true" className="px-5 py-3 text-right text-base font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
+                    <td className="px-5 py-3 text-right text-base font-bold text-gray-900">฿{formatBaht(report.productData.reduce((s,p)=>s+p.baht,0))}</td>
                   </tr>
                 </tfoot>
               </table>

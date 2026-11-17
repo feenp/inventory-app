@@ -1,9 +1,9 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTH } from "@/lib/utils";
-import { exportAsA4Png } from "@/lib/exportImage";
-import { fetchProductSortById, fetchProductSortByName, sortByProductId, sortByProductName } from "@/lib/productOrder";
+import { exportAsTableImage, type TableExportCol } from "@/lib/exportImage";
+import { fetchProductSortById, sortByProductId } from "@/lib/productOrder";
 
 interface ProductRow {
   product_id: string;
@@ -39,7 +39,6 @@ function prevDay(dateStr: string): string {
 
 export default function StockReportClient() {
   const supabase = createClient();
-  const contentRef = useRef<HTMLDivElement>(null);
 
   const bangkokToday = getBangkokToday();
   const [selectedDate, setSelectedDate] = useState(bangkokToday);
@@ -195,8 +194,43 @@ export default function StockReportClient() {
   useEffect(() => { fetchData(selectedDate); }, [fetchData, selectedDate]);
 
   async function handleExport() {
-    if (!contentRef.current) return;
-    await exportAsA4Png(contentRef.current, `รายงานสต็อค_${selectedDate}.png`, true);
+    // Format date as DD/MM/YYYY (Buddhist era)
+    const d = new Date(selectedDate + "T00:00:00+07:00");
+    const beYear = d.getFullYear() + 543;
+    const dateLabel = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${beYear}`;
+
+    const cols: TableExportCol[] = [
+      { key: "name",      label: "ชื่อสินค้า",   align: "left" },
+      { key: "opening",   label: "สต็อคตั้งต้น", align: "right" },
+      { key: "received",  label: "รับเข้า",       align: "right" },
+      { key: "sold",      label: "ขายออก",        align: "right" },
+      { key: "remaining", label: "คงเหลือ",       align: "right" },
+    ];
+
+    const exportRows = rows.map(p => ({
+      name:      p.name,
+      opening:   p.opening   > 0 ? p.opening.toLocaleString()   : "",
+      received:  p.receivedToday > 0 ? p.receivedToday.toLocaleString() : "",
+      sold:      p.soldToday > 0 ? p.soldToday.toLocaleString() : "",
+      remaining: p.total_remaining.toLocaleString(),
+    }));
+
+    const exportFooter = {
+      name:      "รวมทั้งหมด",
+      opening:   totalOpening   > 0 ? totalOpening.toLocaleString()   : "",
+      received:  totalReceived  > 0 ? totalReceived.toLocaleString()  : "",
+      sold:      totalSold      > 0 ? totalSold.toLocaleString()      : "",
+      remaining: totalRemaining.toLocaleString(),
+    };
+
+    await exportAsTableImage({
+      title: `วันที่ ${dateLabel}`,
+      columns: cols,
+      rows: exportRows,
+      footer: exportFooter,
+      summaryLines: totalSold > 0 ? [`ขายได้ ${totalSold.toLocaleString()} กล่อง`] : [],
+      filename: `รายงานสต็อค_${selectedDate}.png`,
+    });
   }
 
   const totalRemaining = rows.reduce((s, p) => s + p.total_remaining, 0);
@@ -236,7 +270,7 @@ export default function StockReportClient() {
       {loading ? (
         <div className="p-10 text-center text-gray-400 font-medium">กำลังโหลด...</div>
       ) : (
-        <div ref={contentRef} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           {/* Export header */}
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
             <div>
