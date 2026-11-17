@@ -35,6 +35,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
   const [filterProduct, setFilterProduct] = useState("");
   const [filterPaid, setFilterPaid] = useState(initialPaid === "false" ? "false" : "");
   const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -50,11 +51,12 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     if (filterPaid === "true") query = query.eq("is_paid", true);
     if (filterPaid === "false") query = query.eq("is_paid", false);
     if (filterDateFrom) query = query.gte("order_date", filterDateFrom);
+    if (filterDateTo) query = query.lte("order_date", filterDateTo);
 
     const { data } = await query;
     setOrders((data as unknown as Order[]) ?? []);
     setLoading(false);
-  }, [supabase, filterCustomer, filterPaid, filterDateFrom]);
+  }, [supabase, filterCustomer, filterPaid, filterDateFrom, filterDateTo]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -72,6 +74,58 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     }
     return true;
   });
+
+  // Product summary computed from currently-filtered orders
+  const productSummaryData = (() => {
+    const map: Record<string, { boxes: number; baht: number }> = {};
+    for (const o of filtered) {
+      for (const l of o.order_lines) {
+        const name = l.lot?.product?.name ?? "ไม่ระบุ";
+        if (!map[name]) map[name] = { boxes: 0, baht: 0 };
+        map[name].boxes += l.quantity;
+        map[name].baht += l.quantity * l.unit_price;
+      }
+    }
+    return Object.entries(map).map(([name, d]) => ({ name, ...d })).sort((a, b) => b.boxes - a.boxes);
+  })();
+
+  function buildDateRangeLabel() {
+    function fmtBE(iso: string) {
+      const d = new Date(iso + "T00:00:00+07:00");
+      return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear() + 543}`;
+    }
+    if (filterDateFrom && filterDateTo && filterDateFrom === filterDateTo) return `วันที่ ${fmtBE(filterDateFrom)}`;
+    if (filterDateFrom && filterDateTo) return `${fmtBE(filterDateFrom)} – ${fmtBE(filterDateTo)}`;
+    if (filterDateFrom) return `ตั้งแต่ ${fmtBE(filterDateFrom)}`;
+    if (filterDateTo) return `ถึง ${fmtBE(filterDateTo)}`;
+    return "";
+  }
+
+  async function handleExportSummary() {
+    if (productSummaryData.length === 0) return;
+    const cols: TableExportCol[] = [
+      { key: "name",  label: "สินค้า",        align: "left" },
+      { key: "boxes", label: "จำนวน (กล่อง)",  align: "right" },
+      { key: "baht",  label: "รายได้ (฿)",    align: "right" },
+    ];
+    const exportRows = productSummaryData.map(p => ({
+      name:  p.name,
+      boxes: p.boxes.toLocaleString(),
+      baht:  `฿${formatBaht(p.baht)}`,
+    }));
+    const totalBoxes = productSummaryData.reduce((s, p) => s + p.boxes, 0);
+    const totalBaht  = productSummaryData.reduce((s, p) => s + p.baht, 0);
+    const dateRange = buildDateRangeLabel();
+    await exportAsTableImage({
+      title:        "สรุปยอดตามสินค้า",
+      subtitle:     dateRange || `ส่งออกเมื่อ ${todayString()}`,
+      columns:      cols,
+      rows:         exportRows,
+      footer:       { name: "รวมทั้งหมด", boxes: totalBoxes.toLocaleString(), baht: `฿${formatBaht(totalBaht)}` },
+      summaryLines: [`${filtered.length} ออเดอร์ · รายได้รวม ฿${formatBaht(totalBaht)}`],
+      filename:     `สรุปออเดอร์_${todayString()}.png`,
+    });
+  }
 
   async function handleExportOrders() {
     const cols: TableExportCol[] = [
@@ -115,7 +169,7 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
     <div>
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <input placeholder="ค้นหา เลขออเดอร์/ลูกค้า/สินค้า" value={search} onChange={e => setSearch(e.target.value)}
             className="col-span-2 md:col-span-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)}
@@ -129,21 +183,18 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
             <option value="true">ชำระแล้ว</option>
             <option value="false">ค้างชำระ</option>
           </select>
-          <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-            title="แสดงออเดอร์ตั้งแต่วันที่นี้"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <div className="flex items-center gap-1">
+            <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+              title="ตั้งแต่วันที่"
+              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <span className="text-gray-400 text-xs shrink-0">–</span>
+            <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+              title="ถึงวันที่"
+              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
           <button onClick={fetchOrders}
             className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-medium rounded-lg px-3 py-2">ค้นหา</button>
         </div>
-      </div>
-
-      {/* Export button */}
-      <div className="flex justify-end mb-3">
-        <button
-          onClick={handleExportOrders}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
-          ดาวน์โหลดรูปภาพ
-        </button>
       </div>
 
       {/* Table */}
@@ -207,6 +258,54 @@ export default function OrdersTable({ customers, products, initialPaid, initialS
         )}
         {!loading && <div className="px-4 py-2 text-xs text-gray-400 border-t border-gray-100">{filtered.length} ออเดอร์</div>}
       </div>
+
+      {/* Product summary section */}
+      {!loading && productSummaryData.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mt-4">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <div className="font-bold text-gray-900">สรุปยอดตามสินค้า</div>
+              {buildDateRangeLabel() && (
+                <div className="text-xs text-gray-400 mt-0.5">{buildDateRangeLabel()}</div>
+              )}
+            </div>
+            <button
+              onClick={handleExportSummary}
+              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors">
+              ดาวน์โหลดสรุป
+            </button>
+          </div>
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left px-4 py-2.5 text-sm font-bold text-gray-700">สินค้า</th>
+                <th className="text-right px-4 py-2.5 text-sm font-bold text-gray-700">จำนวน (กล่อง)</th>
+                <th className="text-right px-4 py-2.5 text-sm font-bold text-gray-700">รายได้ (฿)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {productSummaryData.map((p, i) => (
+                <tr key={p.name} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                  <td className="px-4 py-2 text-base font-semibold text-gray-900">{p.name}</td>
+                  <td className="px-4 py-2 text-right text-base font-bold text-gray-900">{p.boxes.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right text-base font-semibold text-gray-700">฿{formatBaht(p.baht)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-gray-100 border-t-2 border-gray-200">
+              <tr>
+                <td className="px-4 py-2.5 text-sm font-bold text-gray-700">รวมทั้งหมด</td>
+                <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900">
+                  {productSummaryData.reduce((s, p) => s + p.boxes, 0).toLocaleString()} กล่อง
+                </td>
+                <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900">
+                  ฿{formatBaht(productSummaryData.reduce((s, p) => s + p.baht, 0))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
